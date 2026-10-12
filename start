@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Dataset tools.
+# Usage: ./start [annotate] [IMAGES_DIR]   mark board corners in dataset/photos -> dataset/annotated + dataset/labels
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")"
+
+# The shell exports ROS paths that leak foreign packages into the venv.
+unset PYTHONPATH
+
+# opencv-python bundles Qt with only the X11 plugin and no fonts: use XWayland
+# directly and system fonts, instead of printing warnings on every start.
+export QT_QPA_PLATFORM=xcb
+
+if [ ! -x .venv/bin/python ]; then
+    echo "Creating .venv (Python 3.11)..."
+    /usr/bin/python3.11 -m venv .venv
+    .venv/bin/pip install -q -r requirements.txt
+fi
+
+qt_fonts=.venv/lib/python3.11/site-packages/cv2/qt/fonts
+[ -e "$qt_fonts" ] || ln -s /usr/share/fonts/truetype/dejavu "$qt_fonts"
+
+[ "${1:-}" = "annotate" ] && shift
+if [ -n "${1:-}" ] && [ ! -d "$1" ] && [[ "$1" != -* ]]; then
+    echo "Unknown command or no such folder: $1"
+    sed -n '3p' "$0" | sed 's/^# //'
+    exit 1
+fi
+exec .venv/bin/python -m scrabble.annotate "$@"
