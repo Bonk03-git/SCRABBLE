@@ -2,6 +2,21 @@
 A system for analyzing the progress of a Scrabble game in real time; it reads the board, the tiles on it, and the scores for each player.
 It works similarly to the feature offered by chess.com during chess tournaments.
 
+## Workflow
+
+The first model finds the 15×15 grid on an **empty board** (calibration before the game starts).
+
+1. **Take photos.** Aim for 200–300 photos of the empty board (500+ is better). Variety matters more than the count:
+   - different backgrounds (floor, table, carpet, bedspread) and lighting (daylight, lamp, shadows, glare),
+   - different distances (board small or filling the frame) and camera angles (from straight above to steep),
+   - the board rotated in every direction, so each side of it ends up at the top of the photo,
+   - sometimes a hand or other objects in the frame.
+
+   No tiles on the board.
+2. **Label them.** Copy the photos to `dataset/photos/` and mark the corners (see below).
+3. **Train the model** (see "Training the corner model").
+4. **Check the results** on new photos or live from the camera.
+
 ## Creating labels (marking the board on photos)
 
 The labeling tool builds the photo dataset. On each photo you mark the 4 corners of the board by hand. The tool saves their coordinates and moves the photo to the annotated folder.
@@ -90,3 +105,34 @@ A label has the same name as its photo, e.g. `annotated/abc.jpeg` → `labels/ab
 ```
 
 The tool loads the existing points. Undo them with right click and click them again. After saving, the label is overwritten and the photo stays in `annotated/`.
+
+## Training the corner model
+
+`scrabble/corners.py` trains a network (ResNet18 + heatmaps, no YOLO) that finds the 4 grid corners in label order. It uses the photos in `dataset/annotated/` with their labels in `dataset/labels/`.
+
+On Windows, set up the environment once and activate it:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Train (the best model is saved to `models/corners.pt`):
+
+```powershell
+python -m scrabble.corners train                 # 150 epochs by default
+python -m scrabble.corners train --epochs 300    # longer training
+```
+
+Each epoch prints the validation error: the worst corner's distance as a percentage of the grid side. One cell is about 6.7%.
+
+Check the results (any key = next photo, `q` = quit):
+
+```powershell
+python -m scrabble.corners predict                 # photos in dataset/photos
+python -m scrabble.corners predict path\to\photos   # a folder or a single file
+python -m scrabble.corners predict --camera         # live from the camera
+```
+
+The preview shows corners 1–4, the detected 15×15 grid and each corner's confidence (0–1).
