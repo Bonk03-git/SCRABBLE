@@ -145,7 +145,10 @@ class Annotator:
 
     def loupe(self) -> np.ndarray:
         r = LOUPE_RADIUS
-        cx, cy = (int(c / self.scale) for c in self.cursor)
+        # The cursor can be outside the photo: left over from a larger previous photo, or dragged off the window.
+        h, w = self.image.shape[:2]
+        cx = min(max(int(self.cursor[0] / self.scale), 0), w - 1)
+        cy = min(max(int(self.cursor[1] / self.scale), 0), h - 1)
         padded = cv2.copyMakeBorder(self.image, r, r, r, r, cv2.BORDER_CONSTANT)
         crop = padded[cy:cy + 2 * r + 1, cx:cx + 2 * r + 1]
         zoomed = cv2.resize(crop, None, fx=LOUPE_ZOOM, fy=LOUPE_ZOOM, interpolation=cv2.INTER_NEAREST)
