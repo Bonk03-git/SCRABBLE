@@ -47,6 +47,16 @@ def rectify(image, board_corners, cell=CELL):
     return cv2.warpPerspective(image, board_homography(board_corners, cell), (side, side), flags=cv2.INTER_LINEAR)
 
 
+def cell_crops(image, board_corners, cell=CELL, pad=0):
+    """CELLS x CELLS array of cell crops, each cell + 2 * pad pixels on a side (pad = context around the cell)."""
+    side, k = CELLS * cell, cell + 2 * pad
+    shift = np.array([[1, 0, pad], [0, 1, pad], [0, 0, 1]], np.float64)
+    big = cv2.warpPerspective(image, shift @ board_homography(board_corners, cell), (side + 2 * pad, side + 2 * pad),
+                              flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    return np.stack([np.stack([big[r * cell:r * cell + k, c * cell:c * cell + k] for c in range(CELLS)])
+                     for r in range(CELLS)])
+
+
 def split_cells(board):
     """Cut a rectified board into a CELLS x CELLS x cell x cell (x channels) array; [row, col] = cell."""
     cell = board.shape[0] // CELLS

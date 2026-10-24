@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from scrabble.board import CELL, CELLS, GRID_IN_BOARD, grid_corners, rectify, split_cells
+from scrabble.board import CELL, CELLS, GRID_IN_BOARD, cell_crops, grid_corners, rectify, split_cells
 
 
 def checkerboard():
@@ -49,3 +49,19 @@ def test_split_cells_grayscale():
     cells = split_cells(board)
     assert cells.shape == (CELLS, CELLS, CELL, CELL)
     assert cells[2, 3, 0, 0] == board[2 * CELL, 3 * CELL]
+
+
+def test_cell_crops_include_padding_around_each_cell():
+    flat = checkerboard()
+    side = CELLS * CELL
+    left, top, right, bottom = GRID_IN_BOARD
+    gx, gy = (right - left), (bottom - top)
+    # Board corners of an axis-aligned photo whose grid is exactly the flat checkerboard.
+    board_corners = np.float32([[-left / gx, -top / gy], [(1 - left) / gx, -top / gy],
+                                [(1 - left) / gx, (1 - top) / gy], [-left / gx, (1 - top) / gy]]) * side
+    pad = 8
+    crops = cell_crops(flat, board_corners, CELL, pad)
+    assert crops.shape == (CELLS, CELLS, CELL + 2 * pad, CELL + 2 * pad, 3)
+    middle = pad + CELL // 2
+    assert abs(int(crops[3, 4, middle, middle, 0]) - 34) <= 1
+    assert abs(int(crops[3, 4, middle, 2, 0]) - 33) <= 1       # the padding shows the neighbour on the left

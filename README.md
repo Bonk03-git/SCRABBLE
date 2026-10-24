@@ -145,3 +145,52 @@ The preview shows corners 1–4, the detected 15×15 grid and each corner's conf
 python -m scrabble.board test_photos     # a folder or a single file
 python -m scrabble.board --camera        # live from the camera
 ```
+
+## Tile dataset (cells with known letters)
+
+Instead of labelling tiles by hand, lay the whole tile set out on the board in a known order and let the program cut and label the cells.
+
+1. Draw the layout sheets:
+
+   ```bash
+   python -m scrabble.tiles layouts
+   ```
+
+   This writes `dataset/tiles/layouts/layout_01.png` … `layout_06.png` and creates a `photos/` folder for each layout. Every layout is the same rule: all 100 tiles in alphabetical order (A, Ą, B, …, Ż, then the 2 blanks), left to right and row by row, starting at the red cell and wrapping from O15 back to A1. Rows (A–O) and columns (1–15) match the coordinates printed on the board.
+2. Lay out the tiles of one layout. Keep the SCRABBLE logo at the bottom and the letters upright, readable from the logo side.
+3. Take 2–3 photos of it from above (different light or angle is good) and copy them to `dataset/tiles/layout_NN/photos/`.
+4. Repeat for the other layouts.
+5. Cut the cells:
+
+   ```bash
+   python -m scrabble.tiles extract
+   ```
+
+   Each photo is shown rectified, with the expected tile written in the corner of every cell. Check that the letters match the tiles. Enter saves the cells to `dataset/tiles/cells/<letter>/` (`_empty`, `_blank` for empty cells and blanks), `s` skips the photo, `q` quits. If the grid is off, mark the board corners by hand (`./start dataset/tiles/layout_NN/photos --dataset dataset/tiles/layout_NN`) and run `extract` again: hand-marked corners are used instead of the model's.
+
+To skip the preview, mark the corners of all photos by hand, check them on contact sheets (see "Checking labels") and run `python -m scrabble.tiles extract --no-review`: it saves every hand-marked photo without asking.
+
+If a tile is missing from your set, everything after it shifts by one cell. Fix `TILE_COUNTS` in `scrabble/tiles.py` to match your set before taking photos.
+
+## Checking labels
+
+```bash
+python -m scrabble.check labels                                     # corner dataset -> dataset/check_labels.jpg
+python -m scrabble.check labels dataset/tiles/layout_01 --layout 1  # tile photos, with the expected tiles
+```
+
+Every labelled photo is rectified by its hand-marked corners and put on a contact sheet with the 15×15 grid (the `.txt` next to it maps board numbers to photos). With correct labels every board has the SCRABBLE logo at the bottom and grid lines on the cell borders; with `--layout` the expected tile is written in each cell.
+
+`python -m scrabble.check grid` measures `GRID_IN_BOARD` again from the average of all rectified photos. Run it if the corner labels change, and copy the printed values into `scrabble/board.py`.
+
+## Training the tile classifier
+
+`scrabble/letters.py` trains a ResNet18 (no YOLO) that tells which tile is in a cell: one of the 32 letters, a blank, or nothing. It uses the cells cut by `python -m scrabble.tiles extract`. Validation uses whole photos the network never saw.
+
+```bash
+python -m scrabble.letters train                  # 15 epochs by default; the best model goes to models/letters.pt
+python -m scrabble.letters predict test_photos    # read boards in photos (a folder or a single file)
+python -m scrabble.letters predict --camera       # live from the camera
+```
+
+Each epoch prints the validation accuracy and the most common mistakes, e.g. `W->M x2`. The preview shows the read tiles on the rectified board, with unsure ones in red, and prints the board as text.
