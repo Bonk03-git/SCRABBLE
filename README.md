@@ -194,3 +194,23 @@ python -m scrabble.letters predict --camera       # live from the camera
 ```
 
 Each epoch prints the validation accuracy and the most common mistakes, e.g. `W->M x2`. The preview shows the read tiles on the rectified board, with unsure ones in red, and prints the board as text.
+
+## Current results
+
+Measured on 2026-10-25. Rerun the commands above after every retraining and update this section.
+
+**Corner model** (200 board photos, 60 epochs): mean corner error 7.1% of the board side, median 2.9%. It struggles with boards that are small or far away in the photo, and with heavily tiled, rotated boards.
+
+**Tile classifier** (59 photos of the 6 tile layouts, 15 epochs):
+- 100% of cells correct on the 9 held-out layout photos; no tiles found on the 5 empty boards in `test_photos/`.
+- 339 of 351 tiles (96.6%) correct on the 9 photos of random words in `test_photos/words/`. The 12 mistakes:
+  - 5 from the grid sliding off at the bottom of one board (a corner model error);
+  - 4 A read as Ą (the layouts are alphabetical, so A always sits next to Ą and the network partly learns the neighbours);
+  - 3 on a tile lying across cell borders.
+
+  7 of the 12 were marked as unsure (shown in red).
+
+**How to improve:**
+- Retrain the corner model on all 259 labelled photos (board photos plus tile photos), for longer, and add photos of small, far-away and rotated boards.
+- Add labelled photos of random words to the tile training data, so the network stops relying on alphabetical neighbours.
+- Test tiles placed upside down.
