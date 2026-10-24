@@ -64,7 +64,7 @@ What the tool checks for you:
 
 ### What to mark
 
-Click the **outer corners of the 15×15 cell grid**, i.e. the corners of the outermost playing cells. Don't click the corners of the plastic frame or the box. For precise clicks, use the loupe: a 5× zoom around the cursor with a red crosshair. It always sits on the opposite side of the window from the cursor.
+Click the **outer corners of the whole printed board**, including the strips with the coordinates and the bar with the SCRABBLE logo. Don't click the corners of the box. The 15×15 cell grid sits at a fixed place inside the board, so the code computes it from these corners (`GRID_IN_BOARD` in `scrabble/board.py`). For precise clicks, use the loupe: a 5× zoom around the cursor with a red crosshair. It always sits on the opposite side of the window from the cursor.
 
 ### Keys
 
@@ -108,7 +108,7 @@ The tool loads the existing points. Undo them with right click and click them ag
 
 ## Training the corner model
 
-`scrabble/corners.py` trains a network (ResNet18 + heatmaps, no YOLO) that finds the 4 grid corners in label order. It uses the photos in `dataset/annotated/` with their labels in `dataset/labels/`.
+`scrabble/corners.py` trains a network (ResNet18 + heatmaps, no YOLO) that finds the 4 board corners in label order. It uses the photos in `dataset/annotated/` with their labels in `dataset/labels/`.
 
 On Windows, set up the environment once and activate it:
 
@@ -125,7 +125,7 @@ python -m scrabble.corners train                 # 150 epochs by default
 python -m scrabble.corners train --epochs 300    # longer training
 ```
 
-Each epoch prints the validation error: the worst corner's distance as a percentage of the grid side. One cell is about 6.7%.
+Each epoch prints the validation error: the worst corner's distance as a percentage of the board side. One cell is about 5.8%.
 
 Check the results (any key = next photo, `q` = quit):
 
@@ -136,3 +136,12 @@ python -m scrabble.corners predict --camera         # live from the camera
 ```
 
 The preview shows corners 1–4, the detected 15×15 grid and each corner's confidence (0–1).
+
+## Top-down board view
+
+`scrabble/board.py` warps a photo by the detected board corners into a square top-down view of the 15×15 grid and cuts it into cells (`rectify`, `split_cells`). Preview the photo next to the rectified board:
+
+```bash
+python -m scrabble.board test_photos     # a folder or a single file
+python -m scrabble.board --camera        # live from the camera
+```
