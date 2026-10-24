@@ -64,7 +64,7 @@ What the tool checks for you:
 
 ### What to mark
 
-Click the **outer corners of the 15×15 cell grid**, i.e. the corners of the outermost playing cells. Don't click the corners of the plastic frame or the box. For precise clicks, use the loupe: a 5× zoom around the cursor with a red crosshair. It always sits on the opposite side of the window from the cursor.
+Click the **outer corners of the whole printed board**, including the strips with the coordinates and the bar with the SCRABBLE logo. Don't click the corners of the box. The 15×15 cell grid sits at a fixed place inside the board, so the code computes it from these corners (`GRID_IN_BOARD` in `scrabble/board.py`). For precise clicks, use the loupe: a 5× zoom around the cursor with a red crosshair. It always sits on the opposite side of the window from the cursor.
 
 ### Keys
 
@@ -108,7 +108,7 @@ The tool loads the existing points. Undo them with right click and click them ag
 
 ## Training the corner model
 
-`scrabble/corners.py` trains a network (ResNet18 + heatmaps, no YOLO) that finds the 4 grid corners in label order. It uses the photos in `dataset/annotated/` with their labels in `dataset/labels/`.
+`scrabble/corners.py` trains a network (ResNet18 + heatmaps, no YOLO) that finds the 4 board corners in label order. It uses the photos in `dataset/annotated/` with their labels in `dataset/labels/`.
 
 On Windows, set up the environment once and activate it:
 
@@ -125,7 +125,7 @@ python -m scrabble.corners train                 # 150 epochs by default
 python -m scrabble.corners train --epochs 300    # longer training
 ```
 
-Each epoch prints the validation error: the worst corner's distance as a percentage of the grid side. One cell is about 6.7%.
+Each epoch prints the validation error: the worst corner's distance as a percentage of the board side. One cell is about 5.8%.
 
 Check the results (any key = next photo, `q` = quit):
 
@@ -136,3 +136,81 @@ python -m scrabble.corners predict --camera         # live from the camera
 ```
 
 The preview shows corners 1–4, the detected 15×15 grid and each corner's confidence (0–1).
+
+## Top-down board view
+
+`scrabble/board.py` warps a photo by the detected board corners into a square top-down view of the 15×15 grid and cuts it into cells (`rectify`, `split_cells`). Preview the photo next to the rectified board:
+
+```bash
+python -m scrabble.board test_photos     # a folder or a single file
+python -m scrabble.board --camera        # live from the camera
+```
+
+## Tile dataset (cells with known letters)
+
+Instead of labelling tiles by hand, lay the whole tile set out on the board in a known order and let the program cut and label the cells.
+
+1. Draw the layout sheets:
+
+   ```bash
+   python -m scrabble.tiles layouts
+   ```
+
+   This writes `dataset/tiles/layouts/layout_01.png` … `layout_06.png` and creates a `photos/` folder for each layout. Every layout is the same rule: all 100 tiles in alphabetical order (A, Ą, B, …, Ż, then the 2 blanks), left to right and row by row, starting at the red cell and wrapping from O15 back to A1. Rows (A–O) and columns (1–15) match the coordinates printed on the board.
+2. Lay out the tiles of one layout. Keep the SCRABBLE logo at the bottom and the letters upright, readable from the logo side.
+3. Take 2–3 photos of it from above (different light or angle is good) and copy them to `dataset/tiles/layout_NN/photos/`.
+4. Repeat for the other layouts.
+5. Cut the cells:
+
+   ```bash
+   python -m scrabble.tiles extract
+   ```
+
+   Each photo is shown rectified, with the expected tile written in the corner of every cell. Check that the letters match the tiles. Enter saves the cells to `dataset/tiles/cells/<letter>/` (`_empty`, `_blank` for empty cells and blanks), `s` skips the photo, `q` quits. If the grid is off, mark the board corners by hand (`./start dataset/tiles/layout_NN/photos --dataset dataset/tiles/layout_NN`) and run `extract` again: hand-marked corners are used instead of the model's.
+
+To skip the preview, mark the corners of all photos by hand, check them on contact sheets (see "Checking labels") and run `python -m scrabble.tiles extract --no-review`: it saves every hand-marked photo without asking.
+
+If a tile is missing from your set, everything after it shifts by one cell. Fix `TILE_COUNTS` in `scrabble/tiles.py` to match your set before taking photos.
+
+## Checking labels
+
+```bash
+python -m scrabble.check labels                                     # corner dataset -> dataset/check_labels.jpg
+python -m scrabble.check labels dataset/tiles/layout_01 --layout 1  # tile photos, with the expected tiles
+```
+
+Every labelled photo is rectified by its hand-marked corners and put on a contact sheet with the 15×15 grid (the `.txt` next to it maps board numbers to photos). With correct labels every board has the SCRABBLE logo at the bottom and grid lines on the cell borders; with `--layout` the expected tile is written in each cell.
+
+`python -m scrabble.check grid` measures `GRID_IN_BOARD` again from the average of all rectified photos. Run it if the corner labels change, and copy the printed values into `scrabble/board.py`.
+
+## Training the tile classifier
+
+`scrabble/letters.py` trains a ResNet18 (no YOLO) that tells which tile is in a cell: one of the 32 letters, a blank, or nothing. It uses the cells cut by `python -m scrabble.tiles extract`. Validation uses whole photos the network never saw.
+
+```bash
+python -m scrabble.letters train                  # 15 epochs by default; the best model goes to models/letters.pt
+python -m scrabble.letters predict test_photos    # read boards in photos (a folder or a single file)
+python -m scrabble.letters predict --camera       # live from the camera
+```
+
+Each epoch prints the validation accuracy and the most common mistakes, e.g. `W->M x2`. The preview shows the read tiles on the rectified board, with unsure ones in red, and prints the board as text.
+
+## Current results
+
+Measured on 2026-10-25. Rerun the commands above after every retraining and update this section.
+
+**Corner model** (200 board photos, 60 epochs): mean corner error 7.1% of the board side, median 2.9%. It struggles with boards that are small or far away in the photo, and with heavily tiled, rotated boards.
+
+**Tile classifier** (59 photos of the 6 tile layouts, 15 epochs):
+- 100% of cells correct on the 9 held-out layout photos; no tiles found on the 5 empty boards in `test_photos/`.
+- 339 of 351 tiles (96.6%) correct on the 9 photos of random words in `test_photos/words/`. The 12 mistakes:
+  - 5 from the grid sliding off at the bottom of one board (a corner model error);
+  - 4 A read as Ą (the layouts are alphabetical, so A always sits next to Ą and the network partly learns the neighbours);
+  - 3 on a tile lying across cell borders.
+
+  7 of the 12 were marked as unsure (shown in red).
+
+**How to improve:**
+- Retrain the corner model on all 259 labelled photos (board photos plus tile photos), for longer, and add photos of small, far-away and rotated boards.
+- Add labelled photos of random words to the tile training data, so the network stops relying on alphabetical neighbours.
+- Test tiles placed upside down.

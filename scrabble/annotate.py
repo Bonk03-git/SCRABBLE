@@ -3,7 +3,7 @@
 Usage: python -m scrabble.annotate [IMAGES_DIR] [--dataset DIR]
 
 Opens the photos in IMAGES_DIR (default: dataset/photos) one by one.
-Click the 4 corners of the 15x15 cell grid IN ORDER: 1 = the board's top-left
+Click the 4 outer corners of the whole printed board IN ORDER: 1 = the board's top-left
 corner, then clockwise (2 top-right, 3 bottom-right, 4 bottom-left). Points
 are saved exactly in click order, so they encode the board's orientation even
 when the photo is rotated. Saving is refused unless the clicks form a convex

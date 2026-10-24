@@ -1,7 +1,7 @@
 """Board corner detector: a ResNet18 backbone with a heatmap head (SimpleBaseline style).
 
 The network sees a 256x256 letterboxed photo and outputs 4 heatmaps of 64x64,
-one per grid corner in label order (1 = the board's top-left, then clockwise).
+one per board corner in label order (1 = the board's top-left, then clockwise).
 Each corner is the peak of its heatmap.
 
 Usage:
@@ -197,7 +197,7 @@ def predict_corners(model, image, device="cpu"):
 # --- training ---------------------------------------------------------------
 
 def corner_error(pred, true):
-    """Worst corner distance as a percentage of the mean grid side."""
+    """Worst corner distance as a percentage of the mean board side."""
     side = np.mean([np.linalg.norm(true[i] - true[(i + 1) % 4]) for i in range(4)])
     return np.linalg.norm(pred - true, axis=1).max() / side * 100
 
@@ -250,9 +250,9 @@ def train(args):
             best = err
             torch.save(model.state_dict(), MODEL_PATH)
             mark = "  saved"
-        print(f"epoch {epoch:3d}  loss {total / len(loader):.3f}  val err {err:5.1f}% of side  "
+        print(f"epoch {epoch:3d}  loss {total / len(loader):.3f}  val err {err:5.1f}% of board side  "
               f"({time.time() - t0:.0f}s){mark}")
-    print(f"Best validation error {best:.1f}% of the grid side. Model: {MODEL_PATH}")
+    print(f"Best validation error {best:.1f}% of the board side. Model: {MODEL_PATH}")
 
 
 # --- prediction -------------------------------------------------------------
@@ -260,8 +260,9 @@ def train(args):
 def draw(image, corners, conf):
     out = image.copy()
     t = max(2, image.shape[1] // 500)
+    from scrabble.board import grid_corners
     square = np.float32([[0, 0], [CELLS, 0], [CELLS, CELLS], [0, CELLS]])
-    H = cv2.getPerspectiveTransform(square, corners.astype(np.float32))
+    H = cv2.getPerspectiveTransform(square, grid_corners(corners))
     for i in range(CELLS + 1):
         for line in (([i, 0], [i, CELLS]), ([0, i], [CELLS, i])):
             a, b = transform_points(H, np.float32(line)).astype(np.int32)
