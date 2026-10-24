@@ -32,6 +32,8 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
 MAX_W, MAX_H = 1280, 800
 LOUPE_RADIUS, LOUPE_ZOOM = 30, 5
 WINDOW = "annotate"
+# Resolve against this file, not the current working directory.
+DATASET_DIR = Path(__file__).resolve().parent.parent / "dataset"
 
 
 CORNER_NAMES = ["top-left", "top-right", "bottom-right", "bottom-left"]
@@ -212,8 +214,8 @@ class Annotator:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("images_dir", nargs="?", default="dataset/photos", type=Path)
-    parser.add_argument("--dataset", default="dataset", type=Path, help="folder with annotated/ and labels/")
+    parser.add_argument("images_dir", nargs="?", default=DATASET_DIR / "photos", type=Path)
+    parser.add_argument("--dataset", default=DATASET_DIR, type=Path, help="folder with annotated/ and labels/")
     args = parser.parse_args()
 
     if not args.images_dir.is_dir():
