@@ -16,7 +16,9 @@ saves the best model (lowest validation error) to models/corners.pt.
 
 evaluate compares corner models on the validation photos of that split (the same photos for
 every model; --all uses every labelled photo). A model trained on another split may have seen
-some of these photos, which flatters it.
+some of these photos, which flatters it. It measures the network alone, without fitting the
+grid to the board lines: the hand labels themselves are only accurate to about 0.3 cell, so
+they can't judge the much finer fitted grid.
 """
 
 import argparse
@@ -191,13 +193,17 @@ def load_model(path=MODEL_PATH, device="cpu"):
 
 
 @torch.no_grad()
-def predict_corners(model, image, device="cpu"):
-    """Return the 4 corners (label order) in photo pixels and their heatmap peak values."""
+def predict_corners(model, image, device="cpu", fit=True):
+    """Return the 4 corners (label order) in photo pixels and their heatmap peak values.
+    With `fit`, the corners are then moved so that the 15x15 grid lies on the board's printed
+    lines (scrabble.board.fit_grid)."""
+    from scrabble.board import fit_grid
     h, w = image.shape[:2]
     M = letterbox_matrix(w, h)
     x = to_tensor(cv2.warpPerspective(image, M, (INPUT, INPUT)))[None].to(device)
     pts, conf = decode(model(x)[0].float().cpu().numpy())
-    return transform_points(np.linalg.inv(M), pts), conf
+    corners = transform_points(np.linalg.inv(M), pts)
+    return (fit_grid(image, corners) if fit else corners), conf
 
 
 # --- training ---------------------------------------------------------------
@@ -222,7 +228,8 @@ def evaluate(args):
     print(f"{len(photos)} photos ({'all labelled' if args.all else 'validation split'})")
     for path in args.models:
         model = load_model(path)
-        errors = np.array([corner_error(predict_corners(model, image)[0], corners) for _, image, corners in photos])
+        errors = np.array([corner_error(predict_corners(model, image, fit=False)[0], corners)
+                           for _, image, corners in photos])
         print(f"{Path(path).name:20s} corner error % of board side: mean {errors.mean():5.1f}  "
               f"median {np.median(errors):5.1f}  max {errors.max():6.1f}  "
               f"> 1 cell (5.8%): {int((errors > 5.8).sum())}")

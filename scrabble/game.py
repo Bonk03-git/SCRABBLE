@@ -8,7 +8,9 @@ Usage:
   python -m scrabble.game PHOTOS_DIR [--players NAME ...]
 
 The photos in PHOTOS_DIR, sorted by name (numbers by value: 2 before 10), are the board after each move, one move per photo,
-starting with the first move. A photo with no new tiles counts as a pass or an exchange.
+starting with the first move. A photo with no new tiles counts as a pass or an exchange. A photo
+that is not a legal move is skipped, or with --accept-refused its tiles go on the board for 0
+points. The grid is fitted to the board's printed lines unless --no-fit.
 """
 
 import argparse
@@ -230,21 +232,28 @@ def main():
     parser.add_argument("photos", type=Path)
     parser.add_argument("--players", nargs="+", default=["Player 1", "Player 2"])
     parser.add_argument("--corner-model", type=Path, default=Path("models/corners.pt"))
+    parser.add_argument("--accept-refused", action="store_true",
+                        help="put the tiles of a refused move on the board for 0 points instead of skipping the photo")
+    parser.add_argument("--no-fit", action="store_true", help="don't fit the grid to the board's printed lines")
     args = parser.parse_args()
 
     corner_model, model = load_corner_model(args.corner_model), load_model()
     game = Game(args.players)
     for path in sorted((p for p in args.photos.iterdir() if p.suffix.lower() in IMAGE_EXTS), key=natural_key):
         image = cv2.imread(str(path))      # applies EXIF orientation, like the labels
-        corners, _ = predict_corners(corner_model, image)
+        corners, _ = predict_corners(corner_model, image, fit=not args.no_fit)
         board, _ = read_board(model, image, corners)
         try:
             print(f"{path.name}  {describe(*game.play(board))}")
-            if game.misread:
-                print(f"  kept the old tiles at {', '.join(game.misread)} (read differently in this photo)")
         except MoveError as e:
-            print(f"{path.name}  skipped: {e}")
-            print("\n".join(" ".join(row) for row in board))
+            if not args.accept_refused:
+                print(f"{path.name}  skipped: {e}")
+                print("\n".join(" ".join(row) for row in board))
+                continue
+            player, _ = game.play(board, force=True)
+            print(f"{path.name}  {player}: accepted anyway for 0 points ({e})")
+        if game.misread:
+            print(f"  kept the old tiles at {', '.join(game.misread)} (read differently in this photo)")
     print("\n" + "\n".join(f"{p}: {s}" for p, s in game.scores.items()))
 
 

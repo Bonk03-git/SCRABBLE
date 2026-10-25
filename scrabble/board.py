@@ -34,6 +34,93 @@ def grid_corners(board_corners):
     return cv2.perspectiveTransform(grid.reshape(-1, 1, 2), H).reshape(-1, 2)
 
 
+def board_from_grid(grid):
+    """Board corners whose grid (by GRID_IN_BOARD) has these corners; the inverse of grid_corners."""
+    left, top, right, bottom = GRID_IN_BOARD
+    fractions = np.float32([[left, top], [right, top], [right, bottom], [left, bottom]])
+    H = cv2.getPerspectiveTransform(fractions, np.float32(grid))
+    unit = np.float32([[0, 0], [1, 0], [1, 1], [0, 1]])
+    return cv2.perspectiveTransform(unit.reshape(-1, 1, 2), H).reshape(-1, 2)
+
+
+def line_points(response, cell, margin, vertical):
+    """Where each grid line really is, band by band: rows of (x, y, line index, strength).
+
+    `response` (a warped image) shows thin bright lines; the expected grid lines are at
+    `margin` + multiples of `cell`. Each line is searched within 0.45 cell of its expected place,
+    in every cell-high band (cell-wide for horizontal lines)."""
+    r, edge = int(0.45 * cell), max(2, cell // 8)
+    image = response if vertical else response.T
+    points = []
+    for i in range(CELLS + 1):
+        x0 = margin + i * cell
+        for j in range(CELLS):
+            y0, y1 = margin + j * cell + edge, margin + (j + 1) * cell - edge
+            profile = image[y0:y1, x0 - r:x0 + r + 1].mean(axis=0)
+            k = int(profile.argmax())
+            strength = profile[k] - np.median(profile)
+            if 0 < k < len(profile) - 1:         # sub-pixel peak from a parabola through 3 samples
+                a, b, c = profile[k - 1:k + 2]
+                k += 0.5 * (a - c) / (a - 2 * b + c) if a - 2 * b + c < 0 else 0
+            x, y = x0 - r + k, (y0 + y1) / 2
+            points.append((x, y, i, strength) if vertical else (y, x, i, strength))
+    return np.array(points)
+
+
+def fit_line_homography(vertical, horizontal, weights_v, weights_h):
+    """3x3 G from warped pixels to grid units such that G(p).x = i for points p on vertical line i
+    and G(p).y = i on horizontal line i: weighted linear least squares in 8 unknowns (g33 = 1)."""
+    rows, rhs = [], []
+    for x, y, i, _ in vertical:
+        rows.append([x, y, 1, 0, 0, 0, -i * x, -i * y])
+        rhs.append(i)
+    for x, y, i, _ in horizontal:
+        rows.append([0, 0, 0, x, y, 1, -i * x, -i * y])
+        rhs.append(i)
+    w = np.sqrt(np.concatenate([weights_v, weights_h]))
+    g = np.linalg.lstsq(np.array(rows) * w[:, None], np.array(rhs) * w, rcond=None)[0]
+    return np.append(g, 1).reshape(3, 3)
+
+
+def fit_grid(image, board_corners, cell=CELL, iterations=2, max_shift=0.6):
+    """Board corners moved so that the 15x15 grid lies on the board's printed lines.
+
+    The corner model can be a few pixels off, which shifts cells near the board's edges by up to
+    half a cell. Each round warps the photo to a top-down view with a one-cell margin, finds the
+    thin bright grid lines in every row and column band and fits the homography that puts the
+    16 + 16 grid lines on them, dropping points far from the fit. The original corners are kept
+    when too few lines are found, or when a grid corner would move more than `max_shift` cells
+    (the lines were probably matched to their neighbours)."""
+    original = np.float32(board_corners)
+    corners = original
+    side = CELLS * cell
+    target = np.float32([[0, 0], [side, 0], [side, side], [0, side]]) + cell
+    units = np.float32([[0, 0], [CELLS, 0], [CELLS, CELLS], [0, CELLS]])
+    kernel = max(3, cell // 4) | 1
+    first = cv2.getPerspectiveTransform(grid_corners(original), target)
+    for _ in range(iterations):
+        H = cv2.getPerspectiveTransform(grid_corners(corners), target)
+        gray = cv2.cvtColor(cv2.warpPerspective(image, H, (side + 2 * cell,) * 2), cv2.COLOR_BGR2GRAY)
+        points = [line_points(cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, np.ones(shape, np.uint8)), cell, cell, v)
+                  for v, shape in ((True, (1, kernel)), (False, (kernel, 1)))]
+        points = [p[p[:, 3] > max(2.0, np.percentile(p[:, 3], 30))] for p in points]
+        weights = [np.ones(len(p)) for p in points]
+        for _ in range(4):                       # refit without the points far from the fit
+            if min(w.sum() for w in weights) < 2 * CELLS:
+                return original
+            G = fit_line_homography(*points, *weights)
+            for k, p in enumerate(points):
+                q = np.c_[p[:, :2], np.ones(len(p))] @ G.T
+                weights[k] = (np.abs(q[:, k] / q[:, 2] - p[:, 2]) < 0.15).astype(float)
+        grid_warped = cv2.perspectiveTransform(units.reshape(-1, 1, 2), np.linalg.inv(G))
+        grid = cv2.perspectiveTransform(grid_warped, np.linalg.inv(H)).reshape(-1, 2)
+        if np.abs(cv2.perspectiveTransform(grid.reshape(-1, 1, 2), first).reshape(-1, 2) - target).max() \
+                > max_shift * cell:
+            return original
+        corners = board_from_grid(grid)
+    return corners
+
+
 def board_homography(board_corners, cell=CELL):
     """3x3 matrix from photo pixels to the rectified grid (board corner 1 at its top-left)."""
     side = CELLS * cell
