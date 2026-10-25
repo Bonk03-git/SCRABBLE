@@ -108,7 +108,7 @@ The tool loads the existing points. Undo them with right click and click them ag
 
 ## Training the corner model
 
-`scrabble/corners.py` trains a network (ResNet18 + heatmaps, no YOLO) that finds the 4 board corners in label order. It uses the photos in `dataset/annotated/` with their labels in `dataset/labels/`.
+`scrabble/corners.py` trains a network (ResNet18 + heatmaps, no YOLO) that finds the 4 board corners in label order. It uses the photos in `dataset/annotated/` with their labels in `dataset/labels/`, plus the labelled tile photos in `dataset/tiles/layout_*/` (`--dataset DIR ...` picks other folders). While training, every photo is shown at a new random rotation (any angle), scale, position and slight perspective, with its corner labels transformed the same way, so the labelled photos don't need rotated copies.
 
 On Windows, set up the environment once and activate it:
 
@@ -194,6 +194,48 @@ python -m scrabble.letters predict --camera       # live from the camera
 ```
 
 Each epoch prints the validation accuracy and the most common mistakes, e.g. `W->M x2`. The preview shows the read tiles on the rectified board, with unsure ones in red, and prints the board as text.
+
+## Scoring moves
+
+`scrabble/game.py` compares the board before and after a move and scores it like a referee would: the new tiles must lie in one row or column without gaps and touch the tiles already on the board (the first move must cover the centre square). Each word made counts, cross words included; premium squares count only under the tiles placed in this move, and playing all 7 tiles adds 50. Words are not checked against a dictionary yet, and a blank always scores 0.
+
+```bash
+python -m scrabble.game path/to/photos --players Ala Ola
+```
+
+The photos, sorted by name (`2.jpg` before `10.jpg`), must show the board after each move, starting with the first one. Every photo prints who played, the words with their scores and the move's total; a photo without new tiles counts as a pass or an exchange, and a photo that is not a legal move is skipped with the reason. The totals are printed at the end.
+
+Tiles never move once played, so the game remembers the tiles it has accepted and looks for new tiles only on empty cells. If a later photo reads an old tile differently (a misread, or a grid that slid a little), the old tile is kept and the cell is reported. `--corner-model models/corners_200.pt` picks another corner model. The test app below shows the same game with the full score breakdown.
+
+## Test app
+
+A simple local web app shows what the system reads and how it scores, so you can check it with your own eyes. Start it from the repository root:
+
+```bash
+./start app                                # Linux
+python -m streamlit run scrabble/app.py    # Windows (in the activated .venv)
+```
+
+It opens in the browser at http://localhost:8501; stop it with Ctrl+C in the terminal. It needs both models (`models/corners*.pt` and `models/letters.pt`, see the training sections above).
+
+**Sidebar.** It opens on the **Game** view, the `corners_200.pt` corner model and the `test_photos/gameplay` folder. You can change:
+- the view: **Game** or **Photos**;
+- the corner model: any `models/corners*.pt`;
+- where the photos come from: a folder under `test_photos/`, files uploaded in the browser, or (Photos view only) a shot from the computer's camera;
+- the player names (Game view), comma separated, in playing order.
+
+**Moving between photos or moves.** Drag the slider, or click **◀** (one step back) and **▶** (one step forward) on either side of it.
+
+**Game view.** The photos are the board after each move, sorted by name (`2.jpg` before `10.jpg`), starting with the first move. For the selected move you see:
+- the players' totals, with the points just scored;
+- the digital board. Premium squares are coloured and named as on the real board: **TW** triple word (red), **DW** double word (pink, the centre ★ too), **TL** triple letter (dark blue), **DL** double letter (light blue). The tiles of this move are yellow, and a small badge on a tile shows the premium square under it. Tiles already on the board that belong to this move's words have a yellow frame. A red frame marks an old tile that this photo read differently; the game keeps the old one;
+- a card for every word made, main word and cross words. It shows each tile with its value, the premium square it used (a premium counts only under a tile placed in this move; old tiles are marked "on board"), and the sum, for example `1×2 + 2 + 2 + 3 + 3×2 + 5 + 2×2 = 24`, then `× 2 (double word) = …` when a word premium was covered. Below it is the move's total, with +50 when all 7 tiles were played;
+- the photo with the detected corners and grid, and the rectified board with the read tiles;
+- a table of all moves with the running totals.
+
+If a move is refused (for example 8 new tiles at once, tiles not in one line, or a misread tile far from the others), the reason is shown and the turn stays with the same player. **Accept this board anyway (0 points)** puts its tiles on the board for no points, so the rest of the game still counts; **Undo accepting this board** reverses it.
+
+**Photos view.** One photo at a time: the detected corners (with their confidence) and grid, the rectified board with the read tiles (red = unsure), the digital board (hover over a tile to see how sure the network is), the list of unsure tiles and the board as text.
 
 ## Current results
 

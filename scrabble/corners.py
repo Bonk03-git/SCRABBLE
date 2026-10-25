@@ -5,11 +5,12 @@ one per board corner in label order (1 = the board's top-left, then clockwise).
 Each corner is the peak of its heatmap.
 
 Usage:
-  python -m scrabble.corners train [--dataset DIR] [--epochs N]
+  python -m scrabble.corners train [--dataset DIR [DIR ...]] [--epochs N]
   python -m scrabble.corners predict [IMAGES_DIR_OR_FILE]
   python -m scrabble.corners predict --camera
 
-Training reads DATASET/labels/*.json with photos from DATASET/annotated and
+Training reads DATASET/labels/*.json with photos from DATASET/annotated (of every
+given DATASET; by default dataset plus the tile layout folders dataset/tiles/layout_*) and
 saves the best model (lowest validation error) to models/corners.pt.
 """
 
@@ -205,7 +206,7 @@ def corner_error(pred, true):
 def train(args):
     torch.manual_seed(0)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    samples = load_samples(Path(args.dataset))
+    samples = [s for dataset in args.dataset for s in load_samples(Path(dataset))]
     if len(samples) < 5:
         raise SystemExit("Need at least 5 labelled photos.")
     random.Random(0).shuffle(samples)
@@ -309,7 +310,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     t = sub.add_parser("train")
-    t.add_argument("--dataset", default="dataset")
+    t.add_argument("--dataset", nargs="+", help="default: dataset and dataset/tiles/layout_*",
+                   default=["dataset", *map(str, sorted(Path("dataset/tiles").glob("layout_*")))])
     t.add_argument("--epochs", type=int, default=150)
     t.add_argument("--batch", type=int, default=16)
     t.add_argument("--lr", type=float, default=1e-3)
