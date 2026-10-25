@@ -150,8 +150,10 @@ def models(corner_path):
 
 
 @st.cache_data(max_entries=300, show_spinner=False)
-def analyse(name, data, corner_path):
-    """Corners, read board and preview images of one photo (given as file bytes)."""
+def analyse(name, data, reading):
+    """Corners, read board and preview images of one photo (given as file bytes).
+    `reading` is (corner model path, whether to fit the grid to the board's printed lines)."""
+    corner_path, fit_grid = reading
     # cv2.imread applies the EXIF orientation of phone photos, like the labels; go through a file.
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / f"photo{Path(name).suffix or '.jpg'}"
@@ -160,7 +162,7 @@ def analyse(name, data, corner_path):
     if image is None:
         return None
     corner_model, model = models(corner_path)
-    corners, conf = predict_corners(corner_model, image)
+    corners, conf = predict_corners(corner_model, image, fit=fit_grid)
     labels, prob = read_board(model, image, corners)
     small = fit(image, 1000)
     s = small.shape[0] / image.shape[0]
@@ -374,11 +376,11 @@ def stepper(labels, key, default=0):
     return k
 
 
-def photos_view(photos, corner_path):
+def photos_view(photos, reading):
     k = stepper([name for name, _ in photos], "photo")
     name, data = photos[k]
     with st.spinner("Reading the board..."):
-        result = analyse(name, data, corner_path)
+        result = analyse(name, data, reading)
     if result is None:
         st.error(f"Can't open {name}", icon=":material/broken_image:")
         return
@@ -409,13 +411,13 @@ def photos_view(photos, corner_path):
             st.code("\n".join(" ".join(row) for row in labels), language=None)
 
 
-def play_game(photos, corner_path, players):
+def play_game(photos, reading, players):
     """One step per photo: who played, the move (or why it was refused), board and scores after it."""
     forced = st.session_state.setdefault("forced", set())     # photos accepted despite a refused move
     game, steps = Game(players), []
     progress = st.progress(0.0, "Reading the photos...")
     for i, (name, data) in enumerate(photos):
-        result = analyse(name, data, corner_path)
+        result = analyse(name, data, reading)
         progress.progress((i + 1) / len(photos), f"Reading {name}...")
         key = hashlib.md5(data).hexdigest()
         step = {"name": name, "key": key, "result": result, "player": game.player, "move": None, "error": None,
@@ -508,9 +510,9 @@ def jump_to_picked_row():
     st.session_state["moves_table_applied"] = rows
 
 
-def game_view(photos, corner_path, players):
+def game_view(photos, reading, players):
     colours = {p: PLAYER_COLOURS[i % len(PLAYER_COLOURS)] for i, p in enumerate(players)}
-    steps = play_game(photos, corner_path, players)
+    steps = play_game(photos, reading, players)
 
     jump_to_picked_row()
     scores = st.empty()                            # filled once the stepper says which move is shown
@@ -572,6 +574,10 @@ def main():
         default = names.index(DEFAULT_CORNER_MODEL) if DEFAULT_CORNER_MODEL in names else 0
         corner_path = st.selectbox("Corner model", corner_models, index=default, format_func=lambda p: p.name,
                                    help="Network that finds the 4 board corners (models/corners*.pt).")
+        fit_grid = st.toggle("Fit the grid to the board lines", value=True,
+                             help="Move the grid found from the corners onto the board's printed lines, so that "
+                                  "corners a few pixels off don't shift the cells near the edges.")
+    reading = (str(corner_path), fit_grid)
     st.sidebar.caption("Keyboard: ← → one step, Home / End first and last.")
 
     if not photos:
@@ -580,9 +586,9 @@ def main():
                    "each move, sorted by name."), icon=":material/arrow_back:")
         return
     if view == PHOTO:
-        photos_view(photos, str(corner_path))
+        photos_view(photos, reading)
     else:
-        game_view(photos, str(corner_path), players)
+        game_view(photos, reading, players)
 
 
 main()
