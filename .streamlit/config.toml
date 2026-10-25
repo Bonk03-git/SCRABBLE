@@ -3,3 +3,19 @@ showEmailPrompt = false
 
 [browser]
 gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#17695d"
+backgroundColor = "#f7f3ea"
+secondaryBackgroundColor = "#efe7d6"
+textColor = "#2b2a26"
+borderColor = "#e2d7bf"
+baseRadius = "0.6rem"
+
+[theme.sidebar]
+backgroundColor = "#efe6d2"
+secondaryBackgroundColor = "#fffdf7"
