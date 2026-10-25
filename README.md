@@ -127,6 +127,13 @@ python -m scrabble.corners train --epochs 300    # longer training
 
 Each epoch prints the validation error: the worst corner's distance as a percentage of the board side. One cell is about 5.8%.
 
+Compare corner models on the same labelled photos (the validation split of the training; `--all` for every labelled photo):
+
+```powershell
+python -m scrabble.corners evaluate                                   # every models/corners*.pt
+python -m scrabble.corners evaluate --models models/corners.pt        # one model
+```
+
 Check the results (any key = next photo, `q` = quit):
 
 ```powershell
@@ -205,7 +212,7 @@ python -m scrabble.game path/to/photos --players Ala Ola
 
 The photos, sorted by name (`2.jpg` before `10.jpg`), must show the board after each move, starting with the first one. Every photo prints who played, the words with their scores and the move's total; a photo without new tiles counts as a pass or an exchange, and a photo that is not a legal move is skipped with the reason. The totals are printed at the end.
 
-Tiles never move once played, so the game remembers the tiles it has accepted and looks for new tiles only on empty cells. If a later photo reads an old tile differently (a misread, or a grid that slid a little), the old tile is kept and the cell is reported. `--corner-model models/corners_200.pt` picks another corner model. The test app below shows the same game with the full score breakdown.
+Tiles never move once played, so the game remembers the tiles it has accepted and looks for new tiles only on empty cells. If a later photo reads an old tile differently (a misread, or a grid that slid a little), the old tile is kept and the cell is reported. `--corner-model models/corners_200.pt` picks another corner model (default: `models/corners.pt`). The test app below shows the same game with the full score breakdown.
 
 ## Test app
 
@@ -218,7 +225,7 @@ python -m streamlit run scrabble/app.py    # Windows (in the activated .venv)
 
 It opens in the browser at http://localhost:8501; stop it with Ctrl+C in the terminal. It needs both models (`models/corners*.pt` and `models/letters.pt`, see the training sections above).
 
-**Sidebar.** It opens on the **Game** view, the `corners_200.pt` corner model and the `test_photos/gameplay` folder. You can change:
+**Sidebar.** It opens on the **Game** view, the `corners.pt` corner model and the `test_photos/gameplay` folder. You can change:
 - the view: **Game** or **Single photo**;
 - where the photos come from (**Photos**): a folder under `test_photos/`, files uploaded in the browser, or (Single photo view only) a shot from the computer's camera;
 - the number of players and their names (**Players**, Game view), in playing order;
@@ -241,18 +248,27 @@ If a move is refused (for example 8 new tiles at once, tiles not in one line, or
 
 Measured on 2026-10-25. Rerun the commands above after every retraining and update this section.
 
-**Corner model** (200 board photos, 60 epochs): mean corner error 7.1% of the board side, median 2.9%. It struggles with boards that are small or far away in the photo, and with heavily tiled, rotated boards.
+**Corner models.** `models/corners.pt` was trained on all 259 labelled photos (200 board photos plus 59 tile photos) for 120 epochs. `models/corners_200.pt` is the earlier model, trained on the 200 board photos for 60 epochs. `python -m scrabble.corners evaluate` on the same 39 validation photos:
 
-**Tile classifier** (59 photos of the 6 tile layouts, 15 epochs):
-- 100% of cells correct on the 9 held-out layout photos; no tiles found on the 5 empty boards in `test_photos/`.
-- 339 of 351 tiles (96.6%) correct on the 9 photos of random words in `test_photos/words/`. The 12 mistakes:
-  - 5 from the grid sliding off at the bottom of one board (a corner model error);
-  - 4 A read as Ą (the layouts are alphabetical, so A always sits next to Ą and the network partly learns the neighbours);
-  - 3 on a tile lying across cell borders.
+| | mean corner error | median | worst | photos off by more than one cell |
+|---|---|---|---|---|
+| `corners.pt` | **2.4%** of the board side | 2.1% | 6.3% | 1 |
+| `corners_200.pt` | 4.5% | 1.6% | 101% | 1 |
 
-  7 of the 12 were marked as unsure (shown in red).
+`corners_200.pt` may have seen some of these photos in training, which flatters it.
+
+**Tile classifier** (59 photos of the 6 tile layouts, 15 epochs): 100% of cells correct on the 9 held-out layout photos. With either corner model, no tiles are found on the 5 empty boards in `test_photos/`.
+
+**Whole pipeline on photos no model was trained on:**
+
+| | `corners.pt` | `corners_200.pt` |
+|---|---|---|
+| `test_photos/words/`: tiles read correctly | **347 of 351** (98.9%) | 339 of 351 (96.6%) |
+| `test_photos/gameplay/`: moves scored correctly | 11 of 13 | **13 of 13** |
+
+In the game, the first move is not counted: it has 8 tiles by mistake, so it is accepted anyway. Almost every mistake comes from the grid sliding about half a cell near one edge of the board, because a corner was found a few pixels off; the tile classifier itself reads well. With `corners.pt`, the remaining word mistakes are 3 on a tile lying across cell borders and 1 Ż read as Z under glare (marked unsure). The 4 cases of A read as Ą with `corners_200.pt` disappear with `corners.pt`, so they came from the grid, not from the alphabetical layouts. In the game, `corners.pt` misses the bottom-left corner, which is close to the edge of the photo: SIW is read as BIW and WRZOSY as WRZ?BY.
 
 **How to improve:**
-- Retrain the corner model on all 259 labelled photos (board photos plus tile photos), for longer, and add photos of small, far-away and rotated boards.
-- Add labelled photos of random words to the tile training data, so the network stops relying on alphabetical neighbours.
-- Test tiles placed upside down.
+- Fit the grid to the board's printed lines after the corner model, so that corners a few pixels off no longer shift cells near the edges.
+- More board photos with a corner near the edge of the photo, and of small, far-away and rotated boards.
+- Add labelled photos of random words to the tile training data, and test tiles placed upside down.
