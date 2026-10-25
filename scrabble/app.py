@@ -4,7 +4,7 @@ Usage (from the repository root):
   ./start app
   python -m streamlit run scrabble/app.py
 
-Game (the default, on test_photos/gameplay): photos of the board after each move, in name order
+Game (the default, on test_photos/gameplay/1): photos of the board after each move, in name order
 (2 before 10). Step through the moves and see who played which words, how every word's points
 were counted (tile values, premium squares) and the running totals. A refused move can be
 accepted anyway (its tiles go on the board for 0 points).
@@ -33,7 +33,7 @@ from scrabble.letters import IMAGE_EXTS, MODEL_PATH, draw_read, load_model, read
 from scrabble.tiles import EMPTY, ROW_NAMES, CELL_PX
 
 PHOTOS_ROOT = Path("test_photos")
-DEFAULT_FOLDER = PHOTOS_ROOT / "gameplay"
+DEFAULT_FOLDER = PHOTOS_ROOT / "gameplay" / "1"
 DEFAULT_CORNER_MODEL = "corners.pt"
 UNSURE = 0.7                    # same threshold as the red tiles in draw_read
 GAME, PHOTO = "Game", "Single photo"

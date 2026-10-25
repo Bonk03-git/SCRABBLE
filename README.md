@@ -229,7 +229,7 @@ python -m streamlit run scrabble/app.py    # Windows (in the activated .venv)
 
 It opens in the browser at http://localhost:8501; stop it with Ctrl+C in the terminal. It needs both models (`models/corners*.pt` and `models/letters.pt`, see the training sections above).
 
-**Sidebar.** It opens on the **Game** view, the `corners.pt` corner model and the `test_photos/gameplay` folder. You can change:
+**Sidebar.** It opens on the **Game** view, the `corners.pt` corner model and the `test_photos/gameplay/1` folder (the first sample game; `test_photos/gameplay/2` is the second). You can change:
 - the view: **Game** or **Single photo**;
 - where the photos come from (**Photos**): a folder under `test_photos/`, files uploaded in the browser, or (Single photo view only) a shot from the computer's camera;
 - the number of players and their names (**Players**, Game view), in playing order;
@@ -269,10 +269,12 @@ Measured on 2026-10-25. Rerun the commands above after every retraining and upda
 |---|---|---|---|---|
 | `test_photos/words/`: tiles read correctly | **348 of 351** | **348 of 351** | 347 of 351 | 339 of 351 |
 | `test_photos/words/`: tiles marked unsure | 0 | 0 | 4 | 16 |
-| `test_photos/gameplay/`: moves scored correctly | **13 of 13** | **13 of 13** | 11 of 13 | 13 of 13 |
-| `test_photos/gameplay/`: old tiles read differently later | 0 | 0 | 15 | 6 |
+| `test_photos/gameplay/1/`: moves scored correctly | **13 of 13** | **13 of 13** | 11 of 13 | 13 of 13 |
+| `test_photos/gameplay/1/`: old tiles read differently later | 0 | 0 | 15 | 6 |
+| `test_photos/gameplay/2/`: moves scored correctly | **18 of 18** | **18 of 18** | 18 of 18 | 16 of 18 |
+| `test_photos/gameplay/2/`: old tiles read differently later | 0 | 0 | 1 | 13 |
 
-In the game, the first move is not counted: it has 8 tiles by mistake, so it is accepted anyway (`--accept-refused`). The 3 tiles still missed in the word photos are one tile lying loose across cell borders, in 3 photos of the same board; every tile on a cell is read correctly.
+In game 1, the first move is not counted: it has 8 tiles by mistake, so it is accepted anyway (`--accept-refused`). Game 2 (18 moves, two blanks, final score 173 : 202) is legal throughout. The 3 tiles still missed in the word photos are one tile lying loose across cell borders, in 3 photos of the same board; every tile on a cell is read correctly.
 
 Without the fit, almost every mistake came from the grid sliding about half a cell near one edge of the board, because a corner was found a few pixels off. Examples: SIW read as BIW, WRZOSY as WRZ?BY, and A read as Ą (the neighbouring cell got into the crop). The hand labels are only accurate to about 0.3 cell themselves (the fitted grid of a labelled photo moves that much from the label's grid, and it lies on the printed lines), so `evaluate` measures the network alone and can't score the fitted grid.
 
