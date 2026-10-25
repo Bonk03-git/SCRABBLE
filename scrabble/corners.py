@@ -8,10 +8,15 @@ Usage:
   python -m scrabble.corners train [--dataset DIR [DIR ...]] [--epochs N]
   python -m scrabble.corners predict [IMAGES_DIR_OR_FILE]
   python -m scrabble.corners predict --camera
+  python -m scrabble.corners evaluate [--models FILE ...] [--dataset DIR ...] [--all]
 
 Training reads DATASET/labels/*.json with photos from DATASET/annotated (of every
 given DATASET; by default dataset plus the tile layout folders dataset/tiles/layout_*) and
 saves the best model (lowest validation error) to models/corners.pt.
+
+evaluate compares corner models on the validation photos of that split (the same photos for
+every model; --all uses every labelled photo). A model trained on another split may have seen
+some of these photos, which flatters it.
 """
 
 import argparse
@@ -203,15 +208,33 @@ def corner_error(pred, true):
     return np.linalg.norm(pred - true, axis=1).max() / side * 100
 
 
+def split(samples):
+    """(training, validation) samples: a fixed 85 / 15 split."""
+    samples = list(samples)
+    random.Random(0).shuffle(samples)
+    n_val = max(2, round(0.15 * len(samples)))
+    return samples[n_val:], samples[:n_val]
+
+
+def evaluate(args):
+    samples = [s for dataset in args.dataset for s in load_samples(Path(dataset))]
+    photos = samples if args.all else split(samples)[1]
+    print(f"{len(photos)} photos ({'all labelled' if args.all else 'validation split'})")
+    for path in args.models:
+        model = load_model(path)
+        errors = np.array([corner_error(predict_corners(model, image)[0], corners) for _, image, corners in photos])
+        print(f"{Path(path).name:20s} corner error % of board side: mean {errors.mean():5.1f}  "
+              f"median {np.median(errors):5.1f}  max {errors.max():6.1f}  "
+              f"> 1 cell (5.8%): {int((errors > 5.8).sum())}")
+
+
 def train(args):
     torch.manual_seed(0)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     samples = [s for dataset in args.dataset for s in load_samples(Path(dataset))]
     if len(samples) < 5:
         raise SystemExit("Need at least 5 labelled photos.")
-    random.Random(0).shuffle(samples)
-    n_val = max(2, round(0.15 * len(samples)))
-    val, tr = samples[:n_val], samples[n_val:]
+    tr, val = split(samples)
     print(f"{len(tr)} training / {len(val)} validation photos, device: {device}")
 
     repeats = max(1, 512 // len(tr))       # about 512 augmented views per epoch
@@ -316,11 +339,15 @@ def main():
     t.add_argument("--batch", type=int, default=16)
     t.add_argument("--lr", type=float, default=1e-3)
     t.add_argument("--workers", type=int, default=4)
+    e = sub.add_parser("evaluate")
+    e.add_argument("--models", nargs="+", default=sorted(map(str, Path("models").glob("corners*.pt"))))
+    e.add_argument("--dataset", nargs="+", default=t.get_default("dataset"))
+    e.add_argument("--all", action="store_true", help="every labelled photo, not only the validation split")
     p = sub.add_parser("predict")
     p.add_argument("path", nargs="?", default="dataset/photos")
     p.add_argument("--camera", action="store_true")
     args = parser.parse_args()
-    train(args) if args.command == "train" else predict(args)
+    {"train": train, "evaluate": evaluate, "predict": predict}[args.command](args)
 
 
 if __name__ == "__main__":

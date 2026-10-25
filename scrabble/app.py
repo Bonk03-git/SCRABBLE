@@ -34,7 +34,7 @@ from scrabble.tiles import EMPTY, ROW_NAMES, CELL_PX
 
 PHOTOS_ROOT = Path("test_photos")
 DEFAULT_FOLDER = PHOTOS_ROOT / "gameplay"
-DEFAULT_CORNER_MODEL = "corners_200.pt"
+DEFAULT_CORNER_MODEL = "corners.pt"
 UNSURE = 0.7                    # same threshold as the red tiles in draw_read
 GAME, PHOTO = "Game", "Single photo"
 # Premium squares as printed on the board: (short name, name, colour, text colour).
