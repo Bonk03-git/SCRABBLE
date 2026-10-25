@@ -4,3 +4,4 @@ __pycache__/
 models/
 dataset/tiles/cells/
 check_labels*
+*.log

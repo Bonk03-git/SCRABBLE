@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Dataset tools.
+# Dataset tools and the test app.
 # Usage: ./start [annotate] [IMAGES_DIR]   mark board corners in dataset/photos -> dataset/annotated + dataset/labels
+#        ./start app                      open the test app in the browser
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
@@ -20,10 +21,14 @@ fi
 qt_fonts=.venv/lib/python3.11/site-packages/cv2/qt/fonts
 [ -e "$qt_fonts" ] || ln -s /usr/share/fonts/truetype/dejavu "$qt_fonts"
 
+if [ "${1:-}" = "app" ]; then
+    exec .venv/bin/python -m streamlit run scrabble/app.py
+fi
+
 [ "${1:-}" = "annotate" ] && shift
 if [ -n "${1:-}" ] && [ ! -d "$1" ] && [[ "$1" != -* ]]; then
     echo "Unknown command or no such folder: $1"
-    sed -n '3p' "$0" | sed 's/^# //'
+    sed -n '3,4p' "$0" | sed 's/^# *//'
     exit 1
 fi
 exec .venv/bin/python -m scrabble.annotate "$@"
