@@ -24,7 +24,7 @@ env -u PYTHONPATH .venv/bin/pytest tests/test_annotate.py::test_save_moves_photo
 
 ## Architecture
 
-The current scope: the corner dataset and model, the top-down board view, tile reading (tile dataset and classifier) and scoring (`scrabble/game.py`). `scrabble/app.py` is a simple Streamlit test app (`./start app`) for checking the pipeline and the scoring by eye (Game view with per-word score breakdown, Photos view); it is not the final frontend. Its defaults (Game view, `corners_200.pt`, `test_photos/gameplay`) are the constants at the top of the file; README.md describes how to use it. Live camera tracking and the final frontend come later; don't add them unless asked.
+The current scope: the corner dataset and model, the top-down board view, tile reading (tile dataset and classifier) and scoring (`scrabble/game.py`). `scrabble/app.py` is a simple Streamlit test app (`./start app`) for checking the pipeline and the scoring by eye (Game view with per-word score breakdown, Single photo view); it is not the final frontend. Its defaults (Game view, `corners_200.pt`, `test_photos/gameplay`) are the constants at the top of the file; README.md describes how to use it. Live camera tracking and the final frontend come later; don't add them unless asked.
 
 The dataset flow, with every path under `dataset/`:
 1. The user takes the photos with a phone and copies them into `photos/`. There is deliberately no camera capture code.

@@ -219,23 +219,23 @@ python -m streamlit run scrabble/app.py    # Windows (in the activated .venv)
 It opens in the browser at http://localhost:8501; stop it with Ctrl+C in the terminal. It needs both models (`models/corners*.pt` and `models/letters.pt`, see the training sections above).
 
 **Sidebar.** It opens on the **Game** view, the `corners_200.pt` corner model and the `test_photos/gameplay` folder. You can change:
-- the view: **Game** or **Photos**;
-- the corner model: any `models/corners*.pt`;
-- where the photos come from: a folder under `test_photos/`, files uploaded in the browser, or (Photos view only) a shot from the computer's camera;
-- the player names (Game view), comma separated, in playing order.
+- the view: **Game** or **Single photo**;
+- where the photos come from (**Photos**): a folder under `test_photos/`, files uploaded in the browser, or (Single photo view only) a shot from the computer's camera;
+- the number of players and their names (**Players**, Game view), in playing order;
+- the corner model, under **Settings**: any `models/corners*.pt`.
 
-**Moving between photos or moves.** Drag the slider, or click **◀** (one step back) and **▶** (one step forward) on either side of it.
+**Moving between photos or moves.** Drag the slider, or use the buttons on either side of it: first, one step back, one step forward, last. The keyboard works too: **←** and **→** for one step, **Home** and **End** for the first and the last.
 
 **Game view.** The photos are the board after each move, sorted by name (`2.jpg` before `10.jpg`), starting with the first move. For the selected move you see:
-- the players' totals, with the points just scored;
-- the digital board. Premium squares are coloured and named as on the real board: **TW** triple word (red), **DW** double word (pink, the centre ★ too), **TL** triple letter (dark blue), **DL** double letter (light blue). The tiles of this move are yellow, and a small badge on a tile shows the premium square under it. Tiles already on the board that belong to this move's words have a yellow frame. A red frame marks an old tile that this photo read differently; the game keeps the old one;
-- a card for every word made, main word and cross words. It shows each tile with its value, the premium square it used (a premium counts only under a tile placed in this move; old tiles are marked "on board"), and the sum, for example `1×2 + 2 + 2 + 3 + 3×2 + 5 + 2×2 = 24`, then `× 2 (double word) = …` when a word premium was covered. Below it is the move's total, with +50 when all 7 tiles were played;
-- the photo with the detected corners and grid, and the rectified board with the read tiles;
-- a table of all moves with the running totals.
+- a card for every player with their total and the points just scored; the player who made the move is framed, and the leader is marked with a ★;
+- the digital board (tab **Board**). Premium squares are coloured and named as on the real board: **TW** triple word (red), **DW** double word (pink, the centre ★ too), **TL** triple letter (dark blue), **DL** double letter (light blue). The tiles of this move are yellow with an orange frame, and a small badge on a tile shows the premium square under it. Tiles already on the board that belong to this move's words have a yellow frame. A red frame marks an old tile that this photo read differently; the game keeps the old one. The legend under the board lists only what the board shows;
+- the photo with the detected corners and grid (tab **Photo**) and the rectified board with the read tiles (tab **Top-down view**);
+- on the right, who played and a card for every word made, main word and cross words. It shows each tile with its value, the premium square it used (a premium counts only under a tile placed in this move; old tiles are marked "on board"), and the sum, for example `1×2 + 2 + 2 + 3 + 3×2 + 5 + 2×2 = 24`, then `× 2 (double word) = …` when a word premium was covered. Below it is the move's total, with +50 when all 7 tiles were played;
+- under it all, **All moves**: a table of every move with its status, words, points and the running totals. The shown move is highlighted; tick a row's checkbox to jump to that move.
 
-If a move is refused (for example 8 new tiles at once, tiles not in one line, or a misread tile far from the others), the reason is shown and the turn stays with the same player. **Accept this board anyway (0 points)** puts its tiles on the board for no points, so the rest of the game still counts; **Undo accepting this board** reverses it.
+If a move is refused (for example 8 new tiles at once, tiles not in one line, or a misread tile far from the others), the reason is shown and the turn stays with the same player. The tiles read in that photo but not counted are drawn on the board with a dashed red frame, so you can see what went wrong. **Accept this board anyway (0 points)** puts its tiles on the board for no points, so the rest of the game still counts; **Undo accepting this board** reverses it.
 
-**Photos view.** One photo at a time: the detected corners (with their confidence) and grid, the rectified board with the read tiles (red = unsure), the digital board (hover over a tile to see how sure the network is), the list of unsure tiles and the board as text.
+**Single photo view.** One photo at a time: the number of tiles read, the number of unsure tiles and the weakest corner confidence (hover over the ⓘ for all four), the digital board (hover over a tile to see how sure the network is; unsure tiles have red letters and a red dot), the photo with the detected corners and grid, the rectified board with the read tiles (red = unsure), the list of unsure tiles and the board as text.
 
 ## Current results
 
