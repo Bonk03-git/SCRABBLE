@@ -5,3 +5,5 @@ models/
 dataset/tiles/cells/
 check_labels*
 *.log
+check_grid/
+dataset/photos/

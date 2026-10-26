@@ -1,24 +1,28 @@
-"""Board corner detector: a ResNet18 backbone with a heatmap head (SimpleBaseline style).
+"""Grid corner detector: a ResNet18 backbone with a heatmap head (SimpleBaseline style).
 
-The network sees a 256x256 letterboxed photo and outputs 4 heatmaps of 64x64,
-one per board corner in label order (1 = the board's top-left, then clockwise).
-Each corner is the peak of its heatmap.
+The network sees a 256x256 letterboxed photo and outputs 4 heatmaps of 64x64, one per
+corner of the 15x15 cell grid in label order (1 = the board's top-left, then clockwise).
+Each corner is the peak of its heatmap. Grid corners don't depend on the board edition
+(coordinate strips, logo bar); predict_corners turns them into board corners (board.board_from_grid)
+for the rest of the pipeline.
 
 Usage:
-  python -m scrabble.corners train [--dataset DIR [DIR ...]] [--epochs N]
+  python -m scrabble.corners train [--dataset DIR [DIR ...]] [--epochs N] [--patience N]
   python -m scrabble.corners predict [IMAGES_DIR_OR_FILE]
   python -m scrabble.corners predict --camera
   python -m scrabble.corners evaluate [--models FILE ...] [--dataset DIR ...] [--all]
 
-Training reads DATASET/labels/*.json with photos from DATASET/annotated (of every
+Training reads the "grid" corners of DATASET/labels/*.json (python -m scrabble.check grid-labels) with photos from DATASET/annotated (of every
 given DATASET; by default dataset plus the tile layout folders dataset/tiles/layout_*) and
-saves the best model (lowest validation error) to models/corners.pt.
+saves the best model (lowest validation error) to models/corners.pt. Training stops early when
+the validation error hasn't improved by at least --min-delta for --patience epochs (0 = never).
+The learning rate schedule (one cycle) is planned for all --epochs, so a stop in its high
+learning rate middle can come before the error drops at the end; keep the patience generous.
 
 evaluate compares corner models on the validation photos of that split (the same photos for
 every model; --all uses every labelled photo). A model trained on another split may have seen
 some of these photos, which flatters it. It measures the network alone, without fitting the
-grid to the board lines: the hand labels themselves are only accurate to about 0.3 cell, so
-they can't judge the much finer fitted grid.
+grid to the board lines. Errors are in % of the grid side (one cell = 6.7%).
 """
 
 import argparse
@@ -140,7 +144,9 @@ def load_samples(dataset):
             continue
         s = PRELOAD_SIDE / max(image.shape[:2])
         image = cv2.resize(image, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
-        samples.append((data["image"], image, np.array(data["corners"], np.float64) * s))
+        if "grid" not in data:
+            raise SystemExit(f"{label} has no grid corners: run python -m scrabble.check grid-labels")
+        samples.append((data["image"], image, np.array(data["grid"], np.float64) * s))
     return samples
 
 
@@ -197,19 +203,19 @@ def predict_corners(model, image, device="cpu", fit=True):
     """Return the 4 corners (label order) in photo pixels and their heatmap peak values.
     With `fit`, the corners are then moved so that the 15x15 grid lies on the board's printed
     lines (scrabble.board.fit_grid)."""
-    from scrabble.board import fit_grid
+    from scrabble.board import board_from_grid, fit_grid
     h, w = image.shape[:2]
     M = letterbox_matrix(w, h)
     x = to_tensor(cv2.warpPerspective(image, M, (INPUT, INPUT)))[None].to(device)
     pts, conf = decode(model(x)[0].float().cpu().numpy())
-    corners = transform_points(np.linalg.inv(M), pts)
+    corners = board_from_grid(transform_points(np.linalg.inv(M), pts))
     return (fit_grid(image, corners) if fit else corners), conf
 
 
 # --- training ---------------------------------------------------------------
 
 def corner_error(pred, true):
-    """Worst corner distance as a percentage of the mean board side."""
+    """Worst corner distance as a percentage of the mean side of the true quadrilateral."""
     side = np.mean([np.linalg.norm(true[i] - true[(i + 1) % 4]) for i in range(4)])
     return np.linalg.norm(pred - true, axis=1).max() / side * 100
 
@@ -223,16 +229,17 @@ def split(samples):
 
 
 def evaluate(args):
+    from scrabble.board import grid_corners
     samples = [s for dataset in args.dataset for s in load_samples(Path(dataset))]
     photos = samples if args.all else split(samples)[1]
     print(f"{len(photos)} photos ({'all labelled' if args.all else 'validation split'})")
     for path in args.models:
         model = load_model(path)
-        errors = np.array([corner_error(predict_corners(model, image, fit=False)[0], corners)
-                           for _, image, corners in photos])
-        print(f"{Path(path).name:20s} corner error % of board side: mean {errors.mean():5.1f}  "
+        errors = np.array([corner_error(grid_corners(predict_corners(model, image, fit=False)[0]), grid)
+                           for _, image, grid in photos])
+        print(f"{Path(path).name:20s} corner error % of grid side: mean {errors.mean():5.1f}  "
               f"median {np.median(errors):5.1f}  max {errors.max():6.1f}  "
-              f"> 1 cell (5.8%): {int((errors > 5.8).sum())}")
+              f"> 1 cell (6.7%): {int((errors > 100 / CELLS).sum())}")
 
 
 def train(args):
@@ -253,7 +260,7 @@ def train(args):
     model = CornerNet().to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=args.epochs * len(loader))
-    best = math.inf
+    best, best_epoch = math.inf, 0
     MODEL_PATH.parent.mkdir(exist_ok=True)
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -277,13 +284,16 @@ def train(args):
                     errors.append(corner_error(transform_points(np.linalg.inv(m), pts), true))
         err = float(np.mean(errors))
         mark = ""
-        if err < best:
-            best = err
+        if err < best - args.min_delta:
+            best, best_epoch = err, epoch
             torch.save(model.state_dict(), MODEL_PATH)
             mark = "  saved"
-        print(f"epoch {epoch:3d}  loss {total / len(loader):.3f}  val err {err:5.1f}% of board side  "
+        print(f"epoch {epoch:3d}  loss {total / len(loader):.3f}  val err {err:5.1f}% of grid side  "
               f"({time.time() - t0:.0f}s){mark}")
-    print(f"Best validation error {best:.1f}% of the board side. Model: {MODEL_PATH}")
+        if args.patience and epoch - best_epoch >= args.patience:
+            print(f"Stopped early: no improvement for {args.patience} epochs.")
+            break
+    print(f"Best validation error {best:.1f}% of the grid side (epoch {best_epoch}). Model: {MODEL_PATH}")
 
 
 # --- prediction -------------------------------------------------------------
@@ -292,13 +302,14 @@ def draw(image, corners, conf):
     out = image.copy()
     t = max(2, image.shape[1] // 500)
     from scrabble.board import grid_corners
+    grid = grid_corners(corners)
     square = np.float32([[0, 0], [CELLS, 0], [CELLS, CELLS], [0, CELLS]])
-    H = cv2.getPerspectiveTransform(square, grid_corners(corners))
+    H = cv2.getPerspectiveTransform(square, grid)
     for i in range(CELLS + 1):
         for line in (([i, 0], [i, CELLS]), ([0, i], [CELLS, i])):
             a, b = transform_points(H, np.float32(line)).astype(np.int32)
             cv2.line(out, tuple(a), tuple(b), (0, 255, 0), max(1, t // 2), cv2.LINE_AA)
-    for k, (p, c) in enumerate(zip(corners.astype(np.int32), conf)):
+    for k, (p, c) in enumerate(zip(grid.astype(np.int32), conf)):
         cv2.circle(out, tuple(p), 4 * t, (0, 0, 255), -1)
         cv2.putText(out, f"{k + 1} ({c:.2f})", tuple(p + 6 * t), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * t, (0, 0, 255), t)
     return out
@@ -346,6 +357,8 @@ def main():
     t.add_argument("--batch", type=int, default=16)
     t.add_argument("--lr", type=float, default=1e-3)
     t.add_argument("--workers", type=int, default=4)
+    t.add_argument("--patience", type=int, default=20, help="stop after this many epochs without improvement (0 = never)")
+    t.add_argument("--min-delta", type=float, default=0.05, help="smallest drop of the validation error (%% of the grid side) that counts as an improvement")
     e = sub.add_parser("evaluate")
     e.add_argument("--models", nargs="+", default=sorted(map(str, Path("models").glob("corners*.pt"))))
     e.add_argument("--dataset", nargs="+", default=t.get_default("dataset"))

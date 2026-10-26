@@ -13,7 +13,7 @@ The first model finds the 15×15 grid on an **empty board** (calibration before 
    - sometimes a hand or other objects in the frame.
 
    No tiles on the board.
-2. **Label them.** Copy the photos to `dataset/photos/` and mark the corners (see below).
+2. **Label them.** Copy the photos to `dataset/photos/` and mark the corners (see below), then add the grid corners to the labels with `python -m scrabble.check grid-labels` and check the previews (see "Grid corners in the labels").
 3. **Train the model** (see "Training the corner model").
 4. **Check the results** on new photos or live from the camera.
 
@@ -108,7 +108,7 @@ The tool loads the existing points. Undo them with right click and click them ag
 
 ## Training the corner model
 
-`scrabble/corners.py` trains a network (ResNet18 + heatmaps, no YOLO) that finds the 4 board corners in label order. It uses the photos in `dataset/annotated/` with their labels in `dataset/labels/`, plus the labelled tile photos in `dataset/tiles/layout_*/` (`--dataset DIR ...` picks other folders). While training, every photo is shown at a new random rotation (any angle), scale, position and slight perspective, with its corner labels transformed the same way, so the labelled photos don't need rotated copies.
+`scrabble/corners.py` trains a network (ResNet18 + heatmaps, no YOLO) that finds the 4 corners of the 15×15 cell grid in label order (the `"grid"` points of the labels, see "Grid corners in the labels"; run `python -m scrabble.check grid-labels` first if your labels don't have them). The board corners are then computed from the grid corners, so the rest of the pipeline is unchanged. Because the network looks for the grid itself, not for the edge of the board, it also works on board editions with a different margin around the grid. It uses the photos in `dataset/annotated/` with their labels in `dataset/labels/`, plus the labelled tile photos in `dataset/tiles/layout_*/` (`--dataset DIR ...` picks other folders). While training, every photo is shown at a new random rotation (any angle), scale, position and slight perspective, with its corner labels transformed the same way, so the labelled photos don't need rotated copies.
 
 On Windows, set up the environment once and activate it:
 
@@ -121,11 +121,12 @@ pip install -r requirements.txt
 Train (the best model is saved to `models/corners.pt`):
 
 ```powershell
-python -m scrabble.corners train                 # 150 epochs by default
+python -m scrabble.corners train                 # up to 150 epochs by default
 python -m scrabble.corners train --epochs 300    # longer training
+python -m scrabble.corners train --patience 0    # no early stop: always run all epochs
 ```
 
-Each epoch prints the validation error: the worst corner's distance as a percentage of the board side. One cell is about 5.8%.
+Each epoch prints the validation error: the worst corner's distance as a percentage of the grid side. One cell is about 6.7%. The best model so far is saved after every improvement, so Ctrl+C keeps it. Training stops early when the validation error hasn't dropped by at least 0.05 (`--min-delta`) for 30 epochs (`--patience`). The learning rate is planned for all epochs (high in the middle, falling to zero at the end), so keep the patience generous: the error often drops most near the end.
 
 Compare corner models on the same labelled photos (the validation split of the training; `--all` for every labelled photo):
 
@@ -194,6 +195,19 @@ Every labelled photo is rectified by its hand-marked corners and put on a contac
 
 `python -m scrabble.check grid` measures `GRID_IN_BOARD` again from the average of all rectified photos. Run it if the corner labels change, and copy the printed values into `scrabble/board.py`.
 
+### Grid corners in the labels
+
+```bash
+python -m scrabble.check grid-labels      # all labels in dataset/ and dataset/tiles/layout_*/
+```
+
+Adds the 4 corners of the 15×15 cell grid to every label as `"grid"` (same order as `"corners"`; your hand-marked `"corners"` stay as they are). The grid starts where `GRID_IN_BOARD` puts it inside your board corners and is then moved onto the board's printed lines. Previews go to `dataset/check_grid/`:
+- `sheet_1.jpg`, `sheet_2.jpg`, …: every photo as 4 zoomed grid corners (1 2 on top, 4 3 below, as on the board), with the photo number and how far the fit moved the grid in cells. A correct corner sits exactly on the outer corner of the grid: the outer corner of the triple word square.
+- `photos/NNN_<photo>.jpg`: the whole photo with the grid drawn, for a closer look.
+- `index.txt`: photo number → photo file and how far the grid moved. "label only" means no printed lines were found, so the grid comes from your corners alone.
+
+The fit can't fix a grid more than about a cell off. `GRID_IN_BOARD` was measured mostly on one board, so on other board editions (for example the one with star-shaped premium squares) the grid can land on the wrong lines; check those photos on the sheets.
+
 ## Training the tile classifier
 
 `scrabble/letters.py` trains a ResNet18 (no YOLO) that tells which tile is in a cell: one of the 32 letters, a blank, or nothing. It uses the cells cut by `python -m scrabble.tiles extract`. Validation uses whole photos the network never saw.
@@ -216,7 +230,7 @@ python -m scrabble.game path/to/photos --players Ala Ola
 
 The photos, sorted by name (`2.jpg` before `10.jpg`), must show the board after each move, starting with the first one. Every photo prints who played, the words with their scores and the move's total; a photo without new tiles counts as a pass or an exchange, and a photo that is not a legal move is skipped with the reason. The totals are printed at the end.
 
-Tiles never move once played, so the game remembers the tiles it has accepted and looks for new tiles only on empty cells. If a later photo reads an old tile differently (a misread, or a grid that slid a little), the old tile is kept and the cell is reported. `--corner-model models/corners_200.pt` picks another corner model (default: `models/corners.pt`). `--accept-refused` puts the tiles of a refused move on the board for 0 points instead of skipping the photo (like the button in the test app), and `--no-fit` turns off fitting the grid to the board lines. The test app below shows the same game with the full score breakdown.
+Tiles never move once played, so the game remembers the tiles it has accepted and looks for new tiles only on empty cells. If a later photo reads an old tile differently (a misread, or a grid that slid a little), the old tile is kept and the cell is reported. On a real board every tile is linked to the centre square through tiles side by side, so a tile read apart from the others (a premium square or a tile beside the board read as a tile) is ignored and reported too. `--corner-model PATH` picks another corner model (default: `models/corners.pt`). `--accept-refused` puts the tiles of a refused move on the board for 0 points instead of skipping the photo (like the button in the test app), and `--no-fit` turns off fitting the grid to the board lines. The test app below shows the same game with the full score breakdown.
 
 ## Test app
 
@@ -246,37 +260,41 @@ It opens in the browser at http://localhost:8501; stop it with Ctrl+C in the ter
 
 If a move is refused (for example 8 new tiles at once, tiles not in one line, or a misread tile far from the others), the reason is shown and the turn stays with the same player. The tiles read in that photo but not counted are drawn on the board with a dashed red frame, so you can see what went wrong. **Accept this board anyway (0 points)** puts its tiles on the board for no points, so the rest of the game still counts; **Undo accepting this board** reverses it.
 
-**Single photo view.** One photo at a time: the number of tiles read, the number of unsure tiles and the weakest corner confidence (hover over the ⓘ for all four), the digital board (hover over a tile to see how sure the network is; unsure tiles have red letters and a red dot), the photo with the detected corners and grid, the rectified board with the read tiles (red = unsure), the list of unsure tiles and the board as text.
+**Single photo view.** One photo at a time (tiles apart from the others are left out and listed under the photo, as in the game): the number of tiles read, the number of unsure tiles and the weakest corner confidence (hover over the ⓘ for all four), the digital board (hover over a tile to see how sure the network is; unsure tiles have red letters and a red dot), the photo with the detected corners and grid, the rectified board with the read tiles (red = unsure), the list of unsure tiles and the board as text.
 
 ## Current results
 
-Measured on 2026-10-25. Rerun the commands above after every retraining and update this section.
+Measured on 2026-10-26, after retraining both models on the CPU (no GPU; about 30 s per corner epoch, 10 s per tile epoch). Rerun the commands above after every retraining and update this section.
 
-**Corner models.** `models/corners.pt` was trained on all 259 labelled photos (200 board photos plus 59 tile photos) for 120 epochs. `models/corners_200.pt` is the earlier model, trained on the 200 board photos for 60 epochs. `python -m scrabble.corners evaluate` on the same 39 validation photos:
+**Corner model.** `models/corners.pt` now finds the grid corners. It was trained on all 258 labelled photos (199 board photos plus 59 tile photos; one photo of another board edition was removed). `python -m scrabble.corners evaluate` on the 39 validation photos, as a percentage of the grid side (one cell = 6.7%):
 
 | | mean corner error | median | worst | photos off by more than one cell |
 |---|---|---|---|---|
-| `corners.pt` | **2.4%** of the board side | 2.1% | 6.3% | 1 |
-| `corners_200.pt` | 4.5% | 1.6% | 101% | 1 |
+| `corners.pt` (grid corners) | **2.4%** | **1.8%** | 15.2% | 1 |
+| the earlier model (board corners, grid from `GRID_IN_BOARD`) | 2.6% | 2.5% | 5.3% | 0 |
 
-`corners_200.pt` may have seen some of these photos in training, which flatters it.
+The earlier model was trained with a different validation split, so some of these photos were among its training photos and its numbers are a bit too good. The new model's one miss (15.2%, about 2 cells) is a WhatsApp photo (`WhatsApp Image 2026-10-24 at 14.15.08 (5).jpeg`). The earlier model can't be used with the current code: `predict_corners` expects grid corners from the network.
 
-**Tile classifier** (59 photos of the 6 tile layouts, 15 epochs): 100% of cells correct on the 9 held-out layout photos. With either corner model, no tiles are found on the 5 empty boards in `test_photos/`.
+**Tile classifier** (59 photos of the 6 tile layouts, 15 epochs): 100% of cells correct on the 9 held-out layout photos. On the 5 empty boards in `test_photos/`, 3 read empty; on the other 2 the centre star is read as K, but only with 20–24% confidence, so it is marked unsure.
 
-**Whole pipeline on photos no model was trained on**, with and without fitting the grid to the board lines:
+**Whole pipeline on photos no model was trained on**, with and without fitting the grid to the board lines. With the fit, the new corner model gives exactly the same results as the earlier one on the word photos and in games 1 and 2:
 
-| | `corners.pt` + fit | `corners_200.pt` + fit | `corners.pt` alone | `corners_200.pt` alone |
-|---|---|---|---|---|
-| `test_photos/words/`: tiles read correctly | **348 of 351** | **348 of 351** | 347 of 351 | 339 of 351 |
-| `test_photos/words/`: tiles marked unsure | 0 | 0 | 4 | 16 |
-| `test_photos/gameplay/1/`: moves scored correctly | **13 of 13** | **13 of 13** | 11 of 13 | 13 of 13 |
-| `test_photos/gameplay/1/`: old tiles read differently later | 0 | 0 | 15 | 6 |
-| `test_photos/gameplay/2/`: moves scored correctly | **18 of 18** | **18 of 18** | 18 of 18 | 16 of 18 |
-| `test_photos/gameplay/2/`: old tiles read differently later | 0 | 0 | 1 | 13 |
+| | `corners.pt` + fit | `corners.pt` alone |
+|---|---|---|
+| `test_photos/words/`: tiles read correctly | **348 of 351** | 346 of 351 (+1 tile on an empty cell) |
+| `test_photos/words/`: tiles marked unsure | 0 | 7 |
+| `test_photos/gameplay/1/`: moves scored correctly | **13 of 13** | 11 of 13 |
+| `test_photos/gameplay/1/`: old tiles read differently later | 0 | 21 |
+| `test_photos/gameplay/2/`: moves scored correctly | **18 of 18** | 16 of 18 |
+| `test_photos/gameplay/2/`: old tiles read differently later | 1 | 15 |
 
-In game 1, the first move is not counted: it has 8 tiles by mistake, so it is accepted anyway (`--accept-refused`). Game 2 (18 moves, two blanks, final score 173 : 202) is legal throughout. The 3 tiles still missed in the word photos are one tile lying loose across cell borders, in 3 photos of the same board; every tile on a cell is read correctly.
+In game 1, the first move is not counted: it has 8 tiles by mistake, so it is accepted anyway (`--accept-refused`); the final score is 111 : 90. Game 2 (18 moves, two blanks, final score 173 : 202) is legal throughout; with the fit, one old tile (A10) is read differently in one later photo and the game keeps the old one. The 3 tiles still missed in the word photos are one tile lying loose across cell borders, in 3 photos of the same board; every tile on a cell is read correctly.
 
-Without the fit, almost every mistake came from the grid sliding about half a cell near one edge of the board, because a corner was found a few pixels off. Examples: SIW read as BIW, WRZOSY as WRZ?BY, and A read as Ą (the neighbouring cell got into the crop). The hand labels are only accurate to about 0.3 cell themselves (the fitted grid of a labelled photo moves that much from the label's grid, and it lies on the printed lines), so `evaluate` measures the network alone and can't score the fitted grid.
+Without the fit, almost every mistake came from the grid sliding about half a cell near one edge of the board, because a corner was found a few pixels off. Examples: WIGOR read as WTGOR, SIW? as ĄIW?, PALIWO as PALTWO, and Ó read as O. The hand labels are only accurate to about 0.3 cell themselves (the fitted grid of a labelled photo moves that much from the label's grid, and it lies on the printed lines), so `evaluate` measures the network alone and can't score the fitted grid.
+
+Without the fit, the new corner model reads the word photos better than the earlier one: 4 tiles marked unsure instead of 7, and the misreads PĘTO → PFTO and Ó → O are gone.
+
+**A game on another board** (8 photos, not kept in `test_photos/`) was played on another board edition, with star-shaped premium squares, in strong sunlight. The earlier model put the grid in the wrong place there, because `GRID_IN_BOARD` doesn't fit this board. The new model finds the grid correctly on all 8 photos (the fit moves it by at most 0.6 cell). The game still can't be scored, because the tile classifier has never seen this board and these tiles (white, not cream): it misses most tiles (of WĘDKARZ it reads only W, E, D) and reads two pink star squares as blanks. The star squares are now ignored as tiles apart from the others, but where a tile is missed, the tiles behind it are cut off from the rest and ignored as well. The tile classifier needs cells from this board and tile set in its training data.
 
 **How to improve:**
 - Photograph real games with more varied light, angles and distances. With the fit in place, the open questions are boards seen from far away or at a steep angle, and glare on the tiles.

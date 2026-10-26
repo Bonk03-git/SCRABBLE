@@ -1,6 +1,6 @@
 import pytest
 
-from scrabble.game import PREMIUMS, VALUES, Game, MoveError, empty_board, find_move
+from scrabble.game import PREMIUMS, VALUES, Game, MoveError, drop_isolated, empty_board, find_move
 from scrabble.tiles import TILE_COUNTS
 
 
@@ -107,8 +107,9 @@ def test_game_adds_scores_and_rotates_players():
     assert game.play(b2)[0] == "Ola"
     assert game.play(b2) == ("Ala", None)
     assert game.scores == {"Ala": 10, "Ola": 4}
+    off_line = place(place(b2, 6, 6, "X"), 8, 7, "Y")
     with pytest.raises(MoveError):
-        game.play(place(b2, 0, 0, "X"))
+        game.play(off_line)
     assert game.player == "Ola" and game.scores == {"Ala": 10, "Ola": 4}
 
 
@@ -131,3 +132,26 @@ def test_forced_move_adds_the_tiles_for_no_points():
     player, move = game.play(eight, force=True)
     assert player == "Ala" and move.score == 0 and len(move.tiles) == 8
     assert game.play(place(eight, 8, 3, "A"))[1].score == (2 + 1) * 1    # PA down, nothing doubled
+
+
+def test_tiles_apart_from_the_others_are_dropped():
+    board = place(place(empty_board(), 7, 6, "KOT"), 0, 0, "AB")
+    board[14, 14] = "?"
+    kept, dropped = drop_isolated(board)
+    assert dropped == ["A1", "A2", "O15"]
+    assert (kept == place(empty_board(), 7, 6, "KOT")).all()
+
+
+def test_largest_group_stays_without_a_tile_on_the_centre():
+    board = place(place(empty_board(), 3, 2, "KOT"), 12, 12, "A")
+    kept, dropped = drop_isolated(board)
+    assert dropped == ["M13"] and "".join(kept[3, 2:5]) == "KOT"
+
+
+def test_game_ignores_a_misread_tile_apart_from_the_others():
+    game = Game(["Ala", "Ola"])
+    game.play(place(empty_board(), 7, 6, "KOT"))
+    player, move = game.play(place(place(game.board, 8, 7, "AS"), 3, 3, "?"))     # a star read as a blank
+    assert game.ignored == ["D4"]
+    assert {w.text for w in move.words} == {"AS", "OA", "TS"}
+    assert game.board[3, 3] == "."

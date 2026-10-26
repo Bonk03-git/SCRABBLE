@@ -28,7 +28,7 @@ import streamlit as st
 from scrabble.board import CELLS, rectify
 from scrabble.corners import draw, fit, load_model as load_corner_model, predict_corners
 from scrabble.game import (BINGO, LETTER_BONUS, PREMIUMS, RACK, VALUES, WORD_BONUS, Game, MoveError,
-                           natural_key)
+                           drop_isolated, natural_key)
 from scrabble.letters import IMAGE_EXTS, MODEL_PATH, draw_read, load_model, read_board
 from scrabble.tiles import EMPTY, ROW_NAMES, CELL_PX
 
@@ -385,6 +385,7 @@ def photos_view(photos, reading):
         st.error(f"Can't open {name}", icon=":material/broken_image:")
         return
     labels, prob, conf = result["labels"], result["prob"], result["conf"]
+    labels, ignored = drop_isolated(labels)
     tiles = int((labels != EMPTY).sum())
     unsure = [(f"{ROW_NAMES[r]}{c + 1}", labels[r, c], prob[r, c])
               for r in range(CELLS) for c in range(CELLS) if labels[r, c] != EMPTY and prob[r, c] < UNSURE]
@@ -393,7 +394,7 @@ def photos_view(photos, reading):
     stats[0].metric("Tiles read", tiles, border=True, help=f"In {name}")
     stats[1].metric("Unsure tiles", len(unsure), border=True, help=f"Tiles read with less than {UNSURE:.0%} certainty")
     stats[2].metric("Weakest corner", f"{min(conf):.2f}", border=True,
-                    help="Lowest confidence of the 4 detected board corners (1 = sure). All four: "
+                    help="Lowest confidence of the 4 detected grid corners (1 = sure). All four: "
                          + ", ".join(f"{i + 1}: {c:.2f}" for i, c in enumerate(conf)))
 
     board_col, side_col = st.columns([11, 9], gap="large")
@@ -407,6 +408,9 @@ def photos_view(photos, reading):
             st.markdown(f"**Unsure tiles** (below {UNSURE:.0%})")
             st.html('<div class="chips">' + "".join(f"<span><b>{html.escape(s)}</b> at {cell} · {p:.0%}</span>"
                                                     for cell, s, p in unsure) + "</div>")
+        if ignored:
+            st.caption("Ignored tiles apart from the others (a tile can't stand alone, so they are misreads; "
+                       "the top-down view still shows them): " + ", ".join(ignored))
         with st.expander("Board as text", icon=":material/notes:"):
             st.code("\n".join(" ".join(row) for row in labels), language=None)
 
@@ -421,7 +425,7 @@ def play_game(photos, reading, players):
         progress.progress((i + 1) / len(photos), f"Reading {name}...")
         key = hashlib.md5(data).hexdigest()
         step = {"name": name, "key": key, "result": result, "player": game.player, "move": None, "error": None,
-                "forced": None, "misread": []}
+                "forced": None, "misread": [], "ignored": []}
         if result is None:
             step["error"] = "can't open the photo"
         else:
@@ -432,6 +436,7 @@ def play_game(photos, reading, players):
                 if key in forced:
                     step["error"], step["forced"] = None, str(e)
                     game.play(result["labels"], force=True)
+            step["ignored"] = list(game.ignored)
             if not step["error"]:
                 step["move"] = game.history[-1][1]
                 step["misread"] = list(game.misread)
@@ -478,6 +483,9 @@ def move_panel(step, k, steps, colours):
     if step["misread"]:
         st.warning("These old tiles were read differently in this photo; the game kept the old ones: "
                    + ", ".join(step["misread"]), icon=":material/visibility:")
+    if step["ignored"]:
+        st.caption("Ignored tiles apart from the others on the board (a tile can't stand alone, so they are "
+                   "misreads): " + ", ".join(step["ignored"]))
 
 
 def moves_table(steps, players, k):
@@ -535,7 +543,9 @@ def game_view(photos, reading, players):
         ghosts = {}
         if step["error"] and step["result"] is not None:
             labels = step["result"]["labels"]
-            ghosts = {(r, c): labels[r, c] for r, c in zip(*np.nonzero((labels != EMPTY) & (step["board"] == EMPTY)))}
+            ignored = {(ROW_NAMES.index(m[0]), int(m[1:]) - 1) for m in step["ignored"]}
+            ghosts = {(r, c): labels[r, c] for r, c in zip(*np.nonzero((labels != EMPTY) & (step["board"] == EMPTY)))
+                      if (r, c) not in ignored}
         states = [s for s, cells in (("new", new), ("word", words - new), ("misread", misread), ("ghost", ghosts))
                   if cells]
         board_tab.html(board_html(step["board"], new=new, words=words, misread=misread, ghosts=ghosts)
@@ -573,7 +583,7 @@ def main():
         names = [p.name for p in corner_models]
         default = names.index(DEFAULT_CORNER_MODEL) if DEFAULT_CORNER_MODEL in names else 0
         corner_path = st.selectbox("Corner model", corner_models, index=default, format_func=lambda p: p.name,
-                                   help="Network that finds the 4 board corners (models/corners*.pt).")
+                                   help="Network that finds the 4 grid corners (models/corners*.pt).")
         fit_grid = st.toggle("Fit the grid to the board lines", value=True,
                              help="Move the grid found from the corners onto the board's printed lines, so that "
                                   "corners a few pixels off don't shift the cells near the edges.")

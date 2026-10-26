@@ -110,6 +110,40 @@ def empty_board():
     return np.full((CELLS, CELLS), EMPTY)
 
 
+def linked_tiles(board, start):
+    """Cells of the tiles linked to the cells in `start` through tiles side by side."""
+    seen = {(r, c) for r, c in start if board[r, c] != EMPTY}
+    todo = list(seen)
+    while todo:
+        r, c = todo.pop()
+        for a, b in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):
+            if 0 <= a < CELLS and 0 <= b < CELLS and board[a, b] != EMPTY and (a, b) not in seen:
+                seen.add((a, b))
+                todo.append((a, b))
+    return seen
+
+
+def drop_isolated(board, anchors=(CENTRE,)):
+    """`board` without the tiles that are not linked to any anchor cell, and the names of the
+    dropped cells. On a real board every tile is linked to the centre square, so a tile apart
+    from the others is a misread (a premium square, a tile lying beside the board). If no
+    anchor holds a tile (the centre is not read on the first move), the largest group stays."""
+    board = np.asarray(board)
+    keep = linked_tiles(board, anchors)
+    if not keep:
+        groups, left = [], {(int(r), int(c)) for r, c in zip(*np.nonzero(board != EMPTY))}
+        while left:
+            group = linked_tiles(board, [min(left)])
+            groups.append(group)
+            left -= group
+        keep = max(groups, key=len, default=set())
+    dropped = [(int(r), int(c)) for r, c in zip(*np.nonzero(board != EMPTY)) if (r, c) not in keep]
+    board = board.copy()
+    for r, c in dropped:
+        board[r, c] = EMPTY
+    return board, [cell_name(r * CELLS + c) for r, c in dropped]
+
+
 def word_through(board, r, c, dr, dc):
     """Cells of the run of tiles through (r, c) in direction (dr, dc)."""
     while 0 <= r - dr and 0 <= c - dc and board[r - dr, c - dc] != EMPTY:
@@ -174,7 +208,9 @@ class Game:
 
     Tiles never move once played, so the game keeps the tiles it has accepted and looks only
     for new tiles on empty cells. A read board that disagrees about an old tile (a misread,
-    or a grid that slid off a little) doesn't change it; those cells end up in `misread`."""
+    or a grid that slid off a little) doesn't change it; those cells end up in `misread`.
+    New tiles not linked to the tiles on the board (or to the centre) are ignored, see
+    drop_isolated; those cells end up in `ignored`."""
 
     def __init__(self, players):
         self.players = list(players)
@@ -183,6 +219,7 @@ class Game:
         self.turn = 0
         self.history = []           # (player, Move or None for a pass / exchange)
         self.misread = []           # cells of old tiles the last read board got wrong
+        self.ignored = []           # cells of tiles apart from the others in the last read board
 
     @property
     def player(self):
@@ -195,7 +232,8 @@ class Game:
         board = np.asarray(board)
         old = self.board != EMPTY
         self.misread = [cell_name(r * CELLS + c) for r, c in zip(*np.nonzero(old & (board != self.board)))]
-        seen = np.where(old, self.board, board)
+        seen, self.ignored = drop_isolated(np.where(old, self.board, board),
+                                           [CENTRE] + [(int(r), int(c)) for r, c in zip(*np.nonzero(old))])
         try:
             move = find_move(self.board, seen)
         except MoveError:
@@ -254,6 +292,8 @@ def main():
             print(f"{path.name}  {player}: accepted anyway for 0 points ({e})")
         if game.misread:
             print(f"  kept the old tiles at {', '.join(game.misread)} (read differently in this photo)")
+        if game.ignored:
+            print(f"  ignored the tiles at {', '.join(game.ignored)} (apart from the other tiles)")
     print("\n" + "\n".join(f"{p}: {s}" for p, s in game.scores.items()))
 
 
