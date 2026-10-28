@@ -262,6 +262,28 @@ If a move is refused (for example 8 new tiles at once, tiles not in one line, or
 
 **Single photo view.** One photo at a time (tiles apart from the others are left out and listed under the photo, as in the game): the number of tiles read, the number of unsure tiles and the weakest corner confidence (hover over the ⓘ for all four), the digital board (hover over a tile to see how sure the network is; unsure tiles have red letters and a red dot), the photo with the detected corners and grid, the rectified board with the read tiles (red = unsure), the list of unsure tiles and the board as text.
 
+## Game clock
+
+A chess-style clock in the browser: each player's time counts down only during their turn.
+
+```bash
+./start clock                                   # 2 players, 25 minutes each
+./start clock --players Ala Ola Ela --minutes 20
+./start clock --photos test_photos/gameplay/2  # also read and score the board after each turn
+```
+
+It opens at http://127.0.0.1:8600/ (`--port` changes it); stop it with Ctrl+C in the terminal.
+
+| Key | Action |
+|---|---|
+| Enter / Space, or a click on the clock | start the game; then end the turn, and the time moves to the next player |
+| `p` | pause / resume |
+| `r` | reset all clocks (while paused) |
+
+The player on turn is green. Time over the limit keeps counting and is shown in red with a minus. Every end of a turn is printed in the terminal (who played, how long the turn took, the time left).
+
+**Reading the board on the clock.** With `--photos DIR`, every end of a turn also takes the next photo in `DIR` that has not been used yet (in name order, 2 before 10), reads the board in it and scores the move for the player who pressed the clock: the clock, not the order of the photos, says who played. The move (words and points, or why it was refused) is shown under the clocks and printed in the terminal, and each player's score is shown under their time. A turn with no new tiles on the board is a pass or an exchange; a turn with no new photo in the folder scores nothing. A sample game folder replays the game one press at a time; in a real game, take the photo of the board and copy it into the folder before pressing the clock. A refused move is skipped; with `--accept-refused` its tiles go on the board for 0 points, so one misread doesn't block every later move. Resetting the clock (`r`, or reloading the page) also starts the game again from the first photo. The models load once at start (`--corner-model`, `--no-fit` as in `python -m scrabble.game`).
+
 ## Current results
 
 Measured on 2026-10-26, after retraining both models on the CPU (no GPU; about 30 s per corner epoch, 10 s per tile epoch). Rerun the commands above after every retraining and update this section.

@@ -15,6 +15,7 @@ The stack is Python 3.11 (`/usr/bin/python3.11`) + OpenCV, with a local virtuale
 ```bash
 ./start [annotate] [IMAGES_DIR]                      # mark board corners (default IMAGES_DIR: dataset/photos)
 ./start app                                          # test app in the browser (Streamlit)
+./start clock [--players NAME ...] [--minutes N] [--photos DIR]   # game clock; reads + scores DIR's next photo per turn
 /usr/bin/python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # setup
 env -u PYTHONPATH .venv/bin/pytest -q                # all tests
 env -u PYTHONPATH .venv/bin/pytest tests/test_annotate.py::test_save_moves_photo_and_writes_label   # single test
@@ -24,7 +25,7 @@ env -u PYTHONPATH .venv/bin/pytest tests/test_annotate.py::test_save_moves_photo
 
 ## Architecture
 
-The current scope: the corner dataset and model, the top-down board view, tile reading (tile dataset and classifier) and scoring (`scrabble/game.py`). `scrabble/app.py` is a simple Streamlit test app (`./start app`) for checking the pipeline and the scoring by eye (Game view with per-word score breakdown, Single photo view); it is not the final frontend. Its defaults (Game view, `corners.pt`, `test_photos/gameplay/1`; each sample game is a subfolder of `test_photos/gameplay/` with one photo per move) are the constants at the top of the file; README.md describes how to use it. Live camera tracking and the final frontend come later; don't add them unless asked.
+The current scope: the corner dataset and model, the top-down board view, tile reading (tile dataset and classifier) and scoring (`scrabble/game.py`). `scrabble/app.py` is a simple Streamlit test app (`./start app`) for checking the pipeline and the scoring by eye (Game view with per-word score breakdown, Single photo view); it is not the final frontend. Its defaults (Game view, `corners.pt`, `test_photos/gameplay/1`; each sample game is a subfolder of `test_photos/gameplay/` with one photo per move) are the constants at the top of the file; README.md describes how to use it. `scrabble/clock.py` is a game clock page (stdlib HTTP server + inline JS, no Streamlit, so it ticks live and takes Enter): Enter/Space ends a turn and POSTs it to `/turn`, which calls `on_turn_end`. With `--photos DIR`, a `Scorer` then reads the next unused photo in `DIR` (natural name order) and plays it in a `Game` for the player who pressed the clock (it sets `game.turn`, so the clock decides who made the move); the page shows the move and the scores, and its reset POSTs `/reset`. The page sends turns one at a time in order. A camera would be another source of the photo in `Scorer.next_photo`. Live camera tracking and the final frontend come later; don't add them unless asked.
 
 The dataset flow, with every path under `dataset/`:
 1. The user takes the photos with a phone and copies them into `photos/`. There is deliberately no camera capture code.
