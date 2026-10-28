@@ -7,3 +7,4 @@ check_labels*
 *.log
 check_grid/
 dataset/photos/
+dataset/camera/

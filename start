@@ -3,6 +3,7 @@
 # Usage: ./start [annotate] [IMAGES_DIR]   mark board corners in dataset/photos -> dataset/annotated + dataset/labels
 #        ./start app                      open the test app in the browser
 #        ./start clock [--photos DIR]     open the game clock in the browser (scores DIR's photos)
+#        ./start camera [SOURCE]          live view of a camera, to aim it at the board
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
@@ -29,11 +30,15 @@ if [ "${1:-}" = "clock" ]; then
     shift
     exec .venv/bin/python -m scrabble.clock "$@"
 fi
+if [ "${1:-}" = "camera" ]; then
+    shift
+    exec .venv/bin/python -m scrabble.camera "$@"
+fi
 
 [ "${1:-}" = "annotate" ] && shift
 if [ -n "${1:-}" ] && [ ! -d "$1" ] && [[ "$1" != -* ]]; then
     echo "Unknown command or no such folder: $1"
-    sed -n '3,5p' "$0" | sed 's/^# *//'
+    sed -n '3,6p' "$0" | sed 's/^# *//'
     exit 1
 fi
 exec .venv/bin/python -m scrabble.annotate "$@"

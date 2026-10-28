@@ -2,6 +2,7 @@ import json
 import threading
 import urllib.request
 
+import numpy as np
 import pytest
 
 from scrabble import clock, game
@@ -102,3 +103,45 @@ def test_refused_move_can_be_accepted(tmp_path):
     scorer = clock.Scorer(["Ann", "Bob"], tmp_path, lambda path: board, accept_refused=True)
     assert "accepted anyway for 0 points" in scorer.turn(0)
     assert (scorer.game.board == board).all()
+
+
+class FakeCamera:
+    """Frames whose brightness numbers them (60, 120, ...), so the reader can tell which one it got."""
+
+    def __init__(self):
+        self.taken = 0
+
+    def frame(self):
+        self.taken += 1
+        return np.full((16, 16, 3), 60 * self.taken, np.uint8)
+
+
+def test_camera_photos_and_record_are_saved_per_game(tmp_path):
+    import cv2
+    old = [(7, 7, "A"), (7, 8, "S"), (8, 7, "B")]
+    boards = {1: board_with(*old[:2]), 2: board_with(*old), 3: board_with(*old, (7, 9, "T"), (9, 7, "U"))}
+    read = lambda path: boards.get(round(cv2.imread(str(path))[8, 8, 0] / 60), board_with(*old[:2]))
+    scorer = clock.Scorer(["Ann", "Bob"], tmp_path, read, camera=FakeCamera())
+    assert list(tmp_path.iterdir()) == []            # no folder before the first photo
+    assert scorer.turn(1).startswith("001.jpg  Bob: AS")
+    assert scorer.turn(0).startswith("002.jpg  Ann: AB")
+    assert "move refused" in scorer.turn(1)          # new tiles not in one line
+    assert scorer.game.scores == {"Ann": 4, "Bob": 4}
+    first = scorer.folder
+    assert sorted(p.name for p in first.iterdir()) == ["001.jpg", "002.jpg", "003.jpg", "game.json"]
+    assert game.load_record(first) == {"players": ["Ann", "Bob"], "moves": [
+        {"photo": "001.jpg", "player": "Bob", "forced": False},
+        {"photo": "002.jpg", "player": "Ann", "forced": False},
+        {"photo": "003.jpg", "player": "Bob", "forced": False}]}
+    scorer.reset()                                    # a new game gets a new folder
+    scorer.turn(0)
+    assert scorer.folder != first and scorer.folder.parent == tmp_path
+    assert [m["photo"] for m in game.load_record(scorer.folder)["moves"]] == ["001.jpg"]
+
+
+def test_camera_without_picture_is_reported(tmp_path):
+    class Broken:
+        def frame(self):
+            raise ValueError("no picture from the camera 4")
+    scorer = clock.Scorer(["Ann", "Bob"], tmp_path, lambda path: None, camera=Broken())
+    assert scorer.turn(0) == "Ann: no picture from the camera 4"

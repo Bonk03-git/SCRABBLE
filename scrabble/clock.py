@@ -1,7 +1,7 @@
 """Game clock in the browser: each player's time counts down while it is their turn.
 
 Usage (from the repository root):
-  ./start clock [--players NAME ...] [--minutes N] [--port N] [--photos DIR]
+  ./start clock [--players NAME ...] [--minutes N] [--port N] [--photos DIR] [--camera SOURCE]
   python -m scrabble.clock
 
 Enter or Space (or a click on the clock) ends the turn and the time moves to the next player;
@@ -11,6 +11,10 @@ With --photos, the server also takes the next photo from DIR that it has not use
 order, 2 before 10), reads the board in it and scores the move for the player who pressed the
 clock; the result and the scores are shown on the page. A sample game replays as it was played,
 and photos copied into DIR during a game are taken in turn.
+With --camera (a USB camera's number or a phone's stream URL, see scrabble.camera), every end of a
+turn takes a photo with the camera instead and scores it. Each game (until a reset) gets a new
+folder DIR/<date and time>/ (DIR defaults to dataset/camera) with the photos 001.jpg, 002.jpg, ...
+and game.json, the record of who played each photo, which the test app replays.
 """
 
 import argparse
@@ -20,7 +24,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from scrabble.game import Game, MoveError, describe, natural_key
+from scrabble.game import Game, MoveError, describe, natural_key, save_record
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -182,39 +186,77 @@ def board_reader(corner_path=Path("models/corners.pt"), fit=True):
 class Scorer:
     """Reads the board after every turn and scores the move for the player who pressed the clock.
 
-    Each turn takes the next photo in `photos` (in name order) that has not been used yet.
+    Each turn takes the next photo in `photos` (in name order) that has not been used yet or,
+    with a `camera`, saves the camera's current frame in this game's folder (a new folder in
+    `photos`, made at the game's first photo) and records the move there (game.save_record).
     A refused move is skipped and its photo stays used, as in `python -m scrabble.game`; with
     `accept_refused` its tiles go on the board for 0 points instead."""
 
-    def __init__(self, players, photos, read, accept_refused=False):
+    def __init__(self, players, photos, read, accept_refused=False, camera=None):
         self.players, self.photos, self.read = list(players), Path(photos), read
-        self.accept_refused = accept_refused
+        self.accept_refused, self.camera = accept_refused, camera
         self.lock = threading.Lock()
         self.reset()
 
     def reset(self):
         self.game = Game(self.players)
         self.used = set()
+        self.folder, self.moves = None, []      # with a camera: this game's folder and record
+
+    def game_folder(self):
+        """This game's folder for the camera's photos, made when it is first needed."""
+        if self.folder is None:
+            from datetime import datetime
+            name = f"{datetime.now():%Y-%m-%d_%H-%M-%S}"
+            folder, n = self.photos / name, 1
+            while folder.exists():
+                n += 1
+                folder = self.photos / f"{name}_{n}"
+            folder.mkdir(parents=True)
+            self.folder = folder
+        return self.folder
 
     def next_photo(self):
         from scrabble.letters import IMAGE_EXTS
         new = [p for p in self.photos.iterdir() if p.suffix.lower() in IMAGE_EXTS and p.name not in self.used]
         return min(new, key=natural_key, default=None)
 
+    def take_photo(self):
+        """This turn's photo: a new frame from the camera, or the next unused photo in the folder."""
+        if self.camera is None:
+            return self.next_photo()
+        import cv2
+        from scrabble.camera import next_path
+        frame = self.camera.frame()
+        path = next_path(self.game_folder())
+        cv2.imwrite(str(path), frame)
+        return path
+
+    def record(self, path, index, forced=False):
+        if self.camera is not None:
+            self.moves.append({"photo": path.name, "player": self.players[index], "forced": forced})
+            save_record(self.folder, self.players, self.moves)
+
     def turn(self, index):
         """Score the turn of player `index`; returns the text to show."""
-        path = self.next_photo()
+        try:
+            path = self.take_photo()
+        except ValueError as e:
+            return f"{self.players[index]}: {e}"
         if path is None:
             return f"{self.players[index]}: no new photo in {self.photos}"
         self.used.add(path.name)
         try:
             board = self.read(path)
         except ValueError as e:
+            self.record(path, index)
             return f"{path.name}  {self.players[index]}: {e}"
         self.game.turn = index          # the clock, not the order of the photos, says who played
         try:
             text = describe(*self.game.play(board))
+            self.record(path, index)
         except MoveError as e:
+            self.record(path, index, forced=self.accept_refused)
             if not self.accept_refused:
                 return f"{path.name}  {self.players[index]}: move refused ({e})"
             self.game.play(board, force=True)
@@ -297,6 +339,9 @@ def main():
     parser.add_argument("--minutes", type=float, default=25, help="time per player")
     parser.add_argument("--port", type=int, default=8600)
     parser.add_argument("--photos", type=Path, help="read and score the board from the photos in this folder")
+    parser.add_argument("--camera", metavar="SOURCE",
+                        help="take the photos with this camera (number or stream URL); each game goes into "
+                             "a new folder in --photos (default dataset/camera)")
     parser.add_argument("--corner-model", type=Path, default=Path("models/corners.pt"))
     parser.add_argument("--accept-refused", action="store_true",
                         help="put the tiles of a refused move on the board for 0 points instead of skipping the photo")
@@ -304,13 +349,22 @@ def main():
     args = parser.parse_args()
     if len(args.players) < 2:
         parser.error("at least 2 players")
-    scorer = None
+    scorer = camera = None
+    if args.camera is not None:
+        from scrabble.camera import Camera
+        args.photos = args.photos or Path("dataset/camera")
+        args.photos.mkdir(parents=True, exist_ok=True)
+        try:
+            camera = Camera(args.camera)
+        except ValueError as e:
+            parser.error(str(e))
+        print(f"Camera {args.camera}: each game goes into a new folder in {args.photos}", flush=True)
     if args.photos:
         if not args.photos.is_dir():
             parser.error(f"no such folder: {args.photos}")
         print("Loading the models...", flush=True)
         scorer = Scorer(args.players, args.photos, board_reader(args.corner_model, fit=not args.no_fit),
-                        args.accept_refused)
+                        args.accept_refused, camera)
     server = make_server(args.players, args.minutes, args.port, scorer=scorer)
     url = f"http://127.0.0.1:{server.server_port}/"
     print(f"Clock for {', '.join(args.players)} ({args.minutes:g} min each) at {url}  (Ctrl+C to quit)", flush=True)
@@ -319,6 +373,9 @@ def main():
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        if camera:
+            camera.close()
 
 
 if __name__ == "__main__":

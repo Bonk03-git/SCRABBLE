@@ -11,8 +11,10 @@ accepted anyway (its tiles go on the board for 0 points).
 Single photo: one photo at a time, with the detected corners and grid, the rectified board with
 the read tiles (unsure ones in red) and the board as a clean digital grid.
 
-Photos come from a folder under test_photos/, from files uploaded in the browser, or (in the
-Single photo view) from the computer's camera.
+Photos come from a folder under test_photos/ or dataset/camera/, from files uploaded in the
+browser, or (in the Single photo view) from the computer's camera. A folder with the clock's record
+(game.json, from ./start clock --camera) is replayed as the clock scored it: its players, and who
+played each photo, come from the record.
 """
 
 import hashlib
@@ -28,11 +30,12 @@ import streamlit as st
 from scrabble.board import CELLS, rectify
 from scrabble.corners import draw, fit, load_model as load_corner_model, predict_corners
 from scrabble.game import (BINGO, LETTER_BONUS, PREMIUMS, RACK, VALUES, WORD_BONUS, Game, MoveError,
-                           drop_isolated, natural_key)
+                           drop_isolated, load_record, natural_key)
 from scrabble.letters import IMAGE_EXTS, MODEL_PATH, draw_read, load_model, read_board
 from scrabble.tiles import EMPTY, ROW_NAMES, CELL_PX
 
 PHOTOS_ROOT = Path("test_photos")
+CAMERA_ROOT = Path("dataset/camera")         # the clock's games taken with a camera
 DEFAULT_FOLDER = PHOTOS_ROOT / "gameplay" / "1"
 DEFAULT_CORNER_MODEL = "corners.pt"
 UNSURE = 0.7                    # same threshold as the red tiles in draw_read
@@ -296,14 +299,15 @@ def describe_words(move):
 # --- photo sources ----------------------------------------------------------
 
 def photo_folders():
-    if not PHOTOS_ROOT.is_dir():
-        return []
-    folders = [PHOTOS_ROOT, *sorted(p for p in PHOTOS_ROOT.rglob("*") if p.is_dir())]
+    folders = []
+    for root in (PHOTOS_ROOT, CAMERA_ROOT):
+        if root.is_dir():
+            folders += [root, *sorted(p for p in root.rglob("*") if p.is_dir())]
     return [f for f in folders if any(p.suffix.lower() in IMAGE_EXTS for p in f.iterdir())]
 
 
 def choose_photos(allow_camera):
-    """[(name, bytes)] picked in the sidebar."""
+    """([(name, bytes)], the clock's record or None) picked in the sidebar."""
     sidebar = st.sidebar
     sidebar.subheader("Photos", divider="gray")
     sources = {"Folder": ":material/folder:", "Upload": ":material/upload:"}
@@ -317,24 +321,34 @@ def choose_photos(allow_camera):
     if source == "Folder":
         folders = photo_folders()
         if not folders:
-            sidebar.warning(f"No photos under {PHOTOS_ROOT}/")
-            return []
+            sidebar.warning(f"No photos under {PHOTOS_ROOT}/ or {CAMERA_ROOT}/")
+            return [], None
         default = folders.index(DEFAULT_FOLDER) if DEFAULT_FOLDER in folders else 0
         folder = sidebar.selectbox("Folder", folders, index=default, format_func=str)
-        paths = sorted((p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXTS), key=natural_key)
-        sidebar.caption(f"{len(paths)} photos, in name order (2 before 10)")
-        return [(p.name, p.read_bytes()) for p in paths]
+        record = load_record(folder)
+        if record:
+            paths = [folder / m["photo"] for m in record["moves"] if (folder / m["photo"]).is_file()]
+            sidebar.caption(f"{len(paths)} photos, in the order the clock took them "
+                            "(press R to load photos taken since)")
+        else:
+            paths = sorted((p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXTS), key=natural_key)
+            sidebar.caption(f"{len(paths)} photos, in name order (2 before 10)")
+        return [(p.name, p.read_bytes()) for p in paths], record
     if source == "Upload":
         files = sidebar.file_uploader("Photos", type=[e[1:] for e in IMAGE_EXTS], accept_multiple_files=True,
                                       help="Photos of the board after each move; they are sorted by name.")
-        return sorted(((f.name, f.getvalue()) for f in files or []), key=lambda f: natural_key(Path(f[0])))
+        return sorted(((f.name, f.getvalue()) for f in files or []), key=lambda f: natural_key(Path(f[0]))), None
     shot = st.camera_input("Take a photo of the board")
-    return [("camera.jpg", shot.getvalue())] if shot else []
+    return ([("camera.jpg", shot.getvalue())] if shot else []), None
 
 
-def choose_players():
+def choose_players(record=None):
     sidebar = st.sidebar
     sidebar.subheader("Players", divider="gray")
+    if record:
+        sidebar.caption("From the clock's record, which also says who played each photo: "
+                        + ", ".join(record["players"]))
+        return list(record["players"])
     n = sidebar.segmented_control("Number of players", [2, 3, 4], default=2, required=True, key="n_players")
     players = []
     for i in range(n):
@@ -415,15 +429,24 @@ def photos_view(photos, reading):
             st.code("\n".join(" ".join(row) for row in labels), language=None)
 
 
-def play_game(photos, reading, players):
-    """One step per photo: who played, the move (or why it was refused), board and scores after it."""
+def play_game(photos, reading, players, record=None):
+    """One step per photo: who played, the move (or why it was refused), board and scores after it.
+    With the clock's record, each photo's player comes from it; otherwise players take turns."""
     forced = st.session_state.setdefault("forced", set())     # photos accepted despite a refused move
+    recorded = {m["photo"]: m for m in record["moves"]} if record else {}
+    # Moves the clock accepted start out accepted here, once, so they can still be undone.
+    applied = st.session_state.setdefault("record_forced", set())
     game, steps = Game(players), []
     progress = st.progress(0.0, "Reading the photos...")
     for i, (name, data) in enumerate(photos):
         result = analyse(name, data, reading)
         progress.progress((i + 1) / len(photos), f"Reading {name}...")
         key = hashlib.md5(data).hexdigest()
+        if name in recorded:
+            game.turn = players.index(recorded[name]["player"])
+            if recorded[name]["forced"] and key not in applied:
+                applied.add(key)
+                forced.add(key)
         step = {"name": name, "key": key, "result": result, "player": game.player, "move": None, "error": None,
                 "forced": None, "misread": [], "ignored": []}
         if result is None:
@@ -518,9 +541,9 @@ def jump_to_picked_row():
     st.session_state["moves_table_applied"] = rows
 
 
-def game_view(photos, reading, players):
+def game_view(photos, reading, players, record=None):
     colours = {p: PLAYER_COLOURS[i % len(PLAYER_COLOURS)] for i, p in enumerate(players)}
-    steps = play_game(photos, reading, players)
+    steps = play_game(photos, reading, players, record)
 
     jump_to_picked_row()
     scores = st.empty()                            # filled once the stepper says which move is shown
@@ -577,8 +600,8 @@ def main():
                  "```\npython -m scrabble.corners train\npython -m scrabble.letters train\n```",
                  icon=":material/error:")
         return
-    photos = choose_photos(allow_camera=view == PHOTO)
-    players = choose_players() if view == GAME else None
+    photos, record = choose_photos(allow_camera=view == PHOTO)
+    players = choose_players(record) if view == GAME else None
     with st.sidebar.expander("Settings", icon=":material/tune:"):
         names = [p.name for p in corner_models]
         default = names.index(DEFAULT_CORNER_MODEL) if DEFAULT_CORNER_MODEL in names else 0
@@ -598,7 +621,7 @@ def main():
     if view == PHOTO:
         photos_view(photos, reading)
     else:
-        game_view(photos, reading, players)
+        game_view(photos, reading, players, record)
 
 
 main()

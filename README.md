@@ -245,7 +245,7 @@ It opens in the browser at http://localhost:8501; stop it with Ctrl+C in the ter
 
 **Sidebar.** It opens on the **Game** view, the `corners.pt` corner model and the `test_photos/gameplay/1` folder (the first sample game; `test_photos/gameplay/2` is the second). You can change:
 - the view: **Game** or **Single photo**;
-- where the photos come from (**Photos**): a folder under `test_photos/`, files uploaded in the browser, or (Single photo view only) a shot from the computer's camera;
+- where the photos come from (**Photos**): a folder under `test_photos/` or `dataset/camera/` (games taken with the clock and a camera, see [Camera](#camera)), files uploaded in the browser, or (Single photo view only) a shot from the computer's camera;
 - the number of players and their names (**Players**, Game view), in playing order;
 - under **Settings**: the corner model (any `models/corners*.pt`) and **Fit the grid to the board lines** (on by default; turn it off to see what the corner model alone gives).
 
@@ -283,6 +283,26 @@ It opens at http://127.0.0.1:8600/ (`--port` changes it); stop it with Ctrl+C in
 The player on turn is green. Time over the limit keeps counting and is shown in red with a minus. Every end of a turn is printed in the terminal (who played, how long the turn took, the time left).
 
 **Reading the board on the clock.** With `--photos DIR`, every end of a turn also takes the next photo in `DIR` that has not been used yet (in name order, 2 before 10), reads the board in it and scores the move for the player who pressed the clock: the clock, not the order of the photos, says who played. The move (words and points, or why it was refused) is shown under the clocks and printed in the terminal, and each player's score is shown under their time. A turn with no new tiles on the board is a pass or an exchange; a turn with no new photo in the folder scores nothing. A sample game folder replays the game one press at a time; in a real game, take the photo of the board and copy it into the folder before pressing the clock. A refused move is skipped; with `--accept-refused` its tiles go on the board for 0 points, so one misread doesn't block every later move. Resetting the clock (`r`, or reloading the page) also starts the game again from the first photo. The models load once at start (`--corner-model`, `--no-fit` as in `python -m scrabble.game`).
+
+## Camera
+
+Instead of copying photos into a folder, the clock can take them with a camera: a USB camera, or a phone that streams video over Wi-Fi (an IP camera app; use the stream's URL). Mount it above the board, looking down or slightly at an angle, so the whole board is in the picture and as large as possible. A 1920×1080 camera gives only about 60 px per cell when the board fills the frame.
+
+```bash
+./start camera 4                                # live view of /dev/video4, to aim the camera
+./start clock --camera 4                        # the clock takes a photo at every end of a turn
+./start clock --camera http://192.168.1.20:8080/video --photos my_games
+```
+
+The camera's number is the N of `/dev/videoN` (a laptop's built-in camera is usually 0, a USB one comes after it); `ls /sys/class/video4linux/*/name` shows their names, or try the numbers with `./start camera N`.
+
+**Live view** (`./start camera [SOURCE]`): `g` shows the grid found in the live view (slower; check that it lies on the board's lines), `s` or Space saves the current frame to `dataset/photos/` to annotate it later, `q` or Esc quits.
+
+**Clock with a camera** (`./start clock --camera SOURCE`): every end of a turn saves the camera's current frame and reads and scores it as above. The frame is taken when the clock is pressed, when the player's hand is off the board. All other options work as without the camera.
+
+Each game gets its own folder, `<date and time>/` inside `--photos DIR` (default `dataset/camera/`), made at the game's first photo; a reset of the clock starts a new folder. It holds the photos `001.jpg`, `002.jpg`, ... and `game.json`, the clock's record of the game: the players, and for each photo who played it and whether a refused move was accepted for 0 points.
+
+**Watching the game in the test app.** In `./start app`, pick the game's folder under `dataset/camera/`. A folder with `game.json` is replayed as the clock scored it: the players and who played each photo come from the record, not from the sidebar or the order of the photos, so a pass without a photo doesn't shift the turns. During a game, press **R** in the app to load the photos taken since. The folders are also new training data.
 
 ## Current results
 

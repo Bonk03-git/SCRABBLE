@@ -14,6 +14,7 @@ points. The grid is fitted to the board's printed lines unless --no-fit.
 """
 
 import argparse
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +54,7 @@ WORD_BONUS = {"W": 3, "w": 2}
 CENTRE = (CELLS // 2, CELLS // 2)
 RACK = 7
 BINGO = 50                      # bonus for playing all 7 tiles in one move
+RECORD = "game.json"            # the clock's record of a game, next to its photos
 
 
 class MoveError(ValueError):
@@ -254,6 +256,19 @@ def describe(player, move):
         return f"{player}: pass or exchange"
     words = ", ".join(f"{w.text} ({w.start} {'across' if w.across else 'down'}) {w.score}" for w in move.words)
     return f"{player}: {words}{f' + {BINGO} for all {RACK} tiles' if move.bingo else ''} = {move.score}"
+
+
+def load_record(folder):
+    """The clock's record of the game in `folder`, or None:
+    {"players": [names], "moves": [{"photo": name, "player": name, "forced": bool}]}, one move per
+    photo in playing order; "forced" means the clock accepted a refused move for 0 points."""
+    path = Path(folder) / RECORD
+    return json.loads(path.read_text()) if path.is_file() else None
+
+
+def save_record(folder, players, moves):
+    (Path(folder) / RECORD).write_text(json.dumps({"players": list(players), "moves": moves}, indent=2,
+                                                  ensure_ascii=False) + "\n")
 
 
 def natural_key(path):
