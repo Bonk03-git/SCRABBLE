@@ -7,6 +7,15 @@ always scores 0 (which letter it stands for is not asked).
 Usage:
   python -m scrabble.game PHOTOS_DIR [--players NAME ...]
 
+The game ends as in the PFS tournament rules (Game.end): when the bag is empty and a player has
+played their last tile (5.1.1a; the bag and every rack are counted from the tiles played, as
+everyone draws back up to 7), when every player still playing passed twice in a row (5.1.1b: four
+pauses for two players; an exchange is not a pause, but only the clock can tell it from a pass),
+or when every player's time has run out (5.1.1c). A player whose time runs out makes no more
+moves and the others play on (6.2.1: alone, two pauses end the game). Then the points of the tiles
+left on each rack are taken off its owner's score (5.1.4), and a player who played out gets those
+of all the others (final_scores).
+
 The photos in PHOTOS_DIR, sorted by name (numbers by value: 2 before 10), are the board after each move, one move per photo,
 starting with the first move. A photo with no new tiles counts as a pass or an exchange. A photo
 that is not a legal move is skipped, or with --accept-refused its tiles go on the board for 0
@@ -14,14 +23,16 @@ points. The grid is fitted to the board's printed lines unless --no-fit.
 """
 
 import argparse
+import json
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
 from scrabble.board import CELLS
-from scrabble.tiles import BLANK, EMPTY, cell_name
+from scrabble.tiles import BLANK, EMPTY, TILE_COUNTS, cell_name
 
 # Polish tile values; a blank is worth 0.
 VALUES = {
@@ -53,6 +64,11 @@ WORD_BONUS = {"W": 3, "w": 2}
 CENTRE = (CELLS // 2, CELLS // 2)
 RACK = 7
 BINGO = 50                      # bonus for playing all 7 tiles in one move
+RECORD = "game.json"            # the clock's record of a game, next to its photos
+TILES = sum(count for _, count in TILE_COUNTS)
+PASS_ROUNDS = 2                 # the game ends when every player passed this many times in a row
+# Why a game ended: a player played out, every player still playing passed, every player's time ran out.
+OUT, PASSES, TIME = "out", "passes", "time"
 
 
 class MoveError(ValueError):
@@ -220,15 +236,20 @@ class Game:
         self.history = []           # (player, Move or None for a pass / exchange)
         self.misread = []           # cells of old tiles the last read board got wrong
         self.ignored = []           # cells of tiles apart from the others in the last read board
+        self.bag = TILES - RACK * len(self.players)
+        self.racks = {p: RACK for p in self.players}     # tiles on each rack
+        self.passes = 0             # pauses in a row: turns without new tiles that were not exchanges
+        self.timed_out = set()      # players whose time ran out: they make no more moves
 
     @property
     def player(self):
         return self.players[self.turn % len(self.players)]
 
-    def play(self, board, force=False):
+    def play(self, board, force=False, exchange=False):
         """Score the move that leads to `board` for the current player and pass the turn on.
         Raises MoveError (and changes nothing) if it is not a legal move, unless `force`: then
-        the new tiles are accepted anyway, for 0 points (players broke a rule, or a misread)."""
+        the new tiles are accepted anyway, for 0 points (players broke a rule, or a misread).
+        A turn without new tiles is a pause, unless `exchange` says the player exchanged tiles."""
         board = np.asarray(board)
         old = self.board != EMPTY
         self.misread = [cell_name(r * CELLS + c) for r, c in zip(*np.nonzero(old & (board != self.board)))]
@@ -244,16 +265,85 @@ class Game:
         if move is not None:
             self.scores[player] += move.score
             self.board = seen
+            # The player draws back up to 7 while the bag lasts. A misread can make a move look
+            # bigger than the rack; the counts then stay at zero instead of going negative.
+            played = min(len(move.tiles), self.racks[player])
+            drawn = min(played, self.bag)
+            self.racks[player] += drawn - played
+            self.bag -= drawn
+            self.passes = 0
+        else:
+            self.passes = 0 if exchange else self.passes + 1
         self.history.append((player, move))
         self.turn += 1
         return player, move
 
 
-def describe(player, move):
+    def time_out(self, player):
+        """`player`'s time ran out: they make no more moves, and the pauses are counted anew among
+        the players still playing."""
+        self.timed_out.add(player)
+        self.passes = 0
+
+    def end(self):
+        """(OUT, the player) if the last move played out the bag and the rack, (PASSES, None) if every
+        player still playing passed twice in a row, (TIME, None) if every player's time ran out,
+        otherwise None."""
+        playing = [p for p in self.players if p not in self.timed_out]
+        if not playing:
+            return TIME, None
+        if self.history:
+            player, move = self.history[-1]
+            if move is not None and self.bag == 0 and self.racks[player] == 0:
+                return OUT, player
+        if self.passes >= PASS_ROUNDS * len(playing):
+            return PASSES, None
+        return None
+
+    def left_value(self):
+        """Points of all the tiles not on the board yet (in the bag and on the racks)."""
+        left = Counter({letter: count for letter, count in TILE_COUNTS})
+        left.subtract(Counter(self.board[self.board != EMPTY].tolist()))
+        return sum(VALUES[letter] * max(count, 0) for letter, count in left.items())
+
+
+def final_scores(scores, left, out=None):
+    """Scores at the end of the game: everyone loses the points `left` on their rack, and the player
+    who played `out` (if any) gains those of all the others."""
+    final = {p: s - left.get(p, 0) for p, s in scores.items()}
+    if out is not None:
+        final[out] += sum(v for p, v in left.items() if p != out)
+    return final
+
+
+def end_text(reason, player=None):
+    return {OUT: f"{player} played their last tile with the bag empty",
+            PASSES: f"every player still playing passed {PASS_ROUNDS} times in a row",
+            TIME: "every player's time ran out"}[reason]
+
+
+def describe(player, move, exchange=None):
+    """`exchange`: whether a turn without new tiles was an exchange (True) or a pause (False), if known."""
     if move is None:
-        return f"{player}: pass or exchange"
+        return f"{player}: {'pass or exchange' if exchange is None else 'exchange' if exchange else 'pause'}"
     words = ", ".join(f"{w.text} ({w.start} {'across' if w.across else 'down'}) {w.score}" for w in move.words)
     return f"{player}: {words}{f' + {BINGO} for all {RACK} tiles' if move.bingo else ''} = {move.score}"
+
+
+def load_record(folder):
+    """The clock's record of the game in `folder`, or None:
+    {"players": [names], "moves": [{"photo": name, "player": name, "forced": bool, "exchange": bool}]},
+    one move per photo in playing order; "forced" means the clock accepted a refused move for 0
+    points, "exchange" that the player marked the turn as an exchange on the clock. A finished game
+    also has "end": {"reason": OUT / PASSES / TIME, "player": who played out (or null),
+    "left": {name: points on their rack}}."""
+    path = Path(folder) / RECORD
+    return json.loads(path.read_text()) if path.is_file() else None
+
+
+def save_record(folder, players, moves, end=None):
+    record = {"players": list(players), "moves": moves} | ({"end": end} if end else {})
+    (Path(folder) / RECORD).write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
 
 
 def natural_key(path):
@@ -264,7 +354,8 @@ def natural_key(path):
 def main():
     import cv2
     from scrabble.corners import load_model as load_corner_model, predict_corners
-    from scrabble.letters import IMAGE_EXTS, load_model, read_board
+    from scrabble.board import IMAGE_EXTS
+    from scrabble.letters import load_model, read_board
 
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("photos", type=Path)
@@ -294,6 +385,9 @@ def main():
             print(f"  kept the old tiles at {', '.join(game.misread)} (read differently in this photo)")
         if game.ignored:
             print(f"  ignored the tiles at {', '.join(game.ignored)} (apart from the other tiles)")
+        if game.end():
+            print(f"Game over: {end_text(*game.end())}; the racks' points are not taken off below")
+            break
     print("\n" + "\n".join(f"{p}: {s}" for p, s in game.scores.items()))
 
 

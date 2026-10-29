@@ -9,7 +9,6 @@ for the rest of the pipeline.
 Usage:
   python -m scrabble.corners train [--dataset DIR [DIR ...]] [--epochs N] [--patience N]
   python -m scrabble.corners predict [IMAGES_DIR_OR_FILE]
-  python -m scrabble.corners predict --camera
   python -m scrabble.corners evaluate [--models FILE ...] [--dataset DIR ...] [--all]
 
 Training reads the "grid" corners of DATASET/labels/*.json (python -m scrabble.check grid-labels) with photos from DATASET/annotated (of every
@@ -45,7 +44,6 @@ SIGMA = 2.0                     # Gaussian radius of the target heatmaps, in hea
 PRELOAD_SIDE = 768              # photos are kept in memory with this longer side
 CELLS = 15
 MODEL_PATH = Path("models/corners.pt")
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
 MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 STD = np.array([0.229, 0.224, 0.225], np.float32)
 
@@ -298,17 +296,23 @@ def train(args):
 
 # --- prediction -------------------------------------------------------------
 
+def grid_lines(corners):
+    """The grid's 16 vertical and 16 horizontal lines in photo pixels, as an array of shape
+    (32, 2, 2): the two end points of each line. `corners` are board corners."""
+    from scrabble.board import grid_corners
+    square = np.float32([[0, 0], [CELLS, 0], [CELLS, CELLS], [0, CELLS]])
+    H = cv2.getPerspectiveTransform(square, grid_corners(corners))
+    lines = [line for i in range(CELLS + 1) for line in (([i, 0], [i, CELLS]), ([0, i], [CELLS, i]))]
+    return transform_points(H, np.float32(lines).reshape(-1, 2)).reshape(-1, 2, 2)
+
+
 def draw(image, corners, conf):
     out = image.copy()
     t = max(2, image.shape[1] // 500)
     from scrabble.board import grid_corners
     grid = grid_corners(corners)
-    square = np.float32([[0, 0], [CELLS, 0], [CELLS, CELLS], [0, CELLS]])
-    H = cv2.getPerspectiveTransform(square, grid)
-    for i in range(CELLS + 1):
-        for line in (([i, 0], [i, CELLS]), ([0, i], [CELLS, i])):
-            a, b = transform_points(H, np.float32(line)).astype(np.int32)
-            cv2.line(out, tuple(a), tuple(b), (0, 255, 0), max(1, t // 2), cv2.LINE_AA)
+    for a, b in grid_lines(corners).astype(np.int32):
+        cv2.line(out, tuple(a), tuple(b), (0, 255, 0), max(1, t // 2), cv2.LINE_AA)
     for k, (p, c) in enumerate(zip(grid.astype(np.int32), conf)):
         cv2.circle(out, tuple(p), 4 * t, (0, 0, 255), -1)
         cv2.putText(out, f"{k + 1} ({c:.2f})", tuple(p + 6 * t), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * t, (0, 0, 255), t)
@@ -323,28 +327,8 @@ def fit(image, max_side=900):
 def predict(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = load_model(device=device)
-    if args.camera:
-        cap = cv2.VideoCapture(0)
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            cv2.imshow("corners", fit(draw(frame, *predict_corners(model, frame, device))))
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-        cap.release()
-    else:
-        target = Path(args.path)
-        paths = sorted(p for p in target.iterdir() if p.suffix.lower() in IMAGE_EXTS) if target.is_dir() else [target]
-        print("Any key = next photo, q = quit.")
-        for path in paths:
-            image = cv2.imread(str(path))
-            if image is None:
-                continue
-            cv2.imshow("corners", fit(draw(image, *predict_corners(model, image, device))))
-            if cv2.waitKey(0) & 0xFF == ord("q"):
-                break
-    cv2.destroyAllWindows()
+    from scrabble.board import browse
+    browse(args.path, "corners", lambda image: fit(draw(image, *predict_corners(model, image, device))))
 
 
 def main():
@@ -365,7 +349,6 @@ def main():
     e.add_argument("--all", action="store_true", help="every labelled photo, not only the validation split")
     p = sub.add_parser("predict")
     p.add_argument("path", nargs="?", default="dataset/photos")
-    p.add_argument("--camera", action="store_true")
     args = parser.parse_args()
     {"train": train, "evaluate": evaluate, "predict": predict}[args.command](args)
 

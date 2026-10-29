@@ -28,7 +28,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
+from scrabble.board import IMAGE_EXTS
+
 MAX_W, MAX_H = 1280, 800
 LOUPE_RADIUS, LOUPE_ZOOM = 30, 5
 WINDOW = "annotate"

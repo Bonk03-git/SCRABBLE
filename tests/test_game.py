@@ -1,6 +1,6 @@
 import pytest
 
-from scrabble.game import PREMIUMS, VALUES, Game, MoveError, drop_isolated, empty_board, find_move
+from scrabble.game import PREMIUMS, VALUES, Game, MoveError, drop_isolated, empty_board, final_scores, find_move
 from scrabble.tiles import TILE_COUNTS
 
 
@@ -155,3 +155,70 @@ def test_game_ignores_a_misread_tile_apart_from_the_others():
     assert game.ignored == ["D4"]
     assert {w.text for w in move.words} == {"AS", "OA", "TS"}
     assert game.board[3, 3] == "."
+
+
+def test_bag_and_racks_follow_the_tiles_played():
+    game = Game(["Ala", "Ola"])
+    assert game.bag == 86 and game.racks == {"Ala": 7, "Ola": 7}
+    board = place(empty_board(), 7, 6, "KOT")
+    game.play(board)
+    assert game.bag == 83 and game.racks == {"Ala": 7, "Ola": 7}      # Ala drew 3
+    game.bag = 1                                                        # near the end
+    game.play(place(board, 8, 6, "AL", across=False))
+    assert game.bag == 0 and game.racks == {"Ala": 7, "Ola": 6}        # only 1 of 2 drawn
+    assert game.end() is None
+
+
+def test_game_ends_when_a_player_plays_out_with_the_bag_empty():
+    game = Game(["Ala", "Ola"])
+    game.bag, game.racks["Ala"] = 0, 3
+    game.play(place(empty_board(), 7, 6, "KOT"))
+    assert game.end() == ("out", "Ala")
+    # What is not on the board is on Ola's rack: all 100 tiles but K, O, T.
+    assert game.left_value() == sum(VALUES[l] * n for l, n in TILE_COUNTS) - 2 - 1 - 2
+
+
+def test_game_ends_when_everyone_passes_twice():
+    game = Game(["Ala", "Ola", "Ela"])
+    board = place(empty_board(), 7, 6, "KOT")
+    game.play(board)
+    for _ in range(5):
+        game.play(board)
+        assert game.end() is None
+    game.play(board)
+    assert game.end() == ("passes", None)
+
+
+def test_final_scores_take_off_the_racks_and_reward_playing_out():
+    scores = {"Ala": 100, "Ola": 90, "Ela": 80}
+    assert final_scores(scores, {"Ala": 0, "Ola": 8, "Ela": 2}, out="Ala") == {"Ala": 110, "Ola": 82, "Ela": 78}
+    assert final_scores(scores, {"Ala": 3, "Ola": 8, "Ela": 2}) == {"Ala": 97, "Ola": 82, "Ela": 78}
+
+
+def test_pfs_time_out_lets_the_others_play_on():
+    game = Game(["Ala", "Ola"])
+    board = place(empty_board(), 7, 6, "KOT")
+    game.play(board)
+    game.play(board)                                    # Ola pauses
+    game.time_out("Ala")                                # the pauses are counted anew
+    game.turn = 1
+    game.play(board)
+    assert game.end() is None
+    game.turn = 1
+    game.play(board)                                    # two pauses of Ola alone end it (6.2.1)
+    assert game.end() == ("passes", None)
+    game = Game(["Ala", "Ola"])
+    game.time_out("Ala")
+    game.time_out("Ola")
+    assert game.end() == ("time", None)
+
+
+def test_exchange_breaks_the_pauses():
+    game = Game(["Ala", "Ola"])
+    board = place(empty_board(), 7, 6, "KOT")
+    game.play(board)
+    for exchange in (False, False, True, False, False, False):
+        game.play(board, exchange=exchange)
+        assert game.end() is None
+    game.play(board)
+    assert game.end() == ("passes", None)

@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from scrabble.board import CELLS, cell_crops, draw_board, rectify
+from scrabble.board import CELLS, IMAGE_EXTS, cell_crops, draw_board, rectify
 
 # Polish Scrabble tile set, 100 tiles; "?" is a blank.
 TILE_COUNTS = [
@@ -42,7 +42,6 @@ ROW_NAMES = "ABCDEFGHIJKLMNO"                   # as printed on the board's left
 TILES_DIR = Path("dataset/tiles")
 CELL_PX = 64                                    # side of one cell in the saved crops
 CELL_PAD = 16                                   # context saved around each cell, so crops are 96 x 96
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
 FONTS = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans-Bold.ttf", "arialbd.ttf", "arial.ttf"]
 
 

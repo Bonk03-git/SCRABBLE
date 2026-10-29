@@ -8,7 +8,6 @@ _blank and _empty. It trains on the cells cut by `python -m scrabble.tiles extra
 Usage:
   python -m scrabble.letters train [--epochs N]
   python -m scrabble.letters predict [IMAGES_DIR_OR_FILE]
-  python -m scrabble.letters predict --camera
 
 Prediction finds the board with the corner model, cuts the cells and shows the read board.
 """
@@ -26,14 +25,13 @@ import torch
 import torch.nn as nn
 import torchvision
 
-from scrabble.board import CELLS, cell_crops, rectify, side_by_side
+from scrabble.board import CELLS, browse, cell_crops, rectify, side_by_side
 from scrabble.corners import color_jitter, to_tensor
 from scrabble.tiles import CELL_PAD, CELL_PX, EMPTY, TILE_COUNTS, TILES_DIR, class_name, draw_texts
 
 CLASSES = [class_name(letter) for letter, _ in TILE_COUNTS] + [class_name(EMPTY)]
 INPUT = CELL_PX                 # the network sees one cell; the crops' padding is room for shifts
 MODEL_PATH = Path("models/letters.pt")
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
 
 
 # --- data -------------------------------------------------------------------
@@ -199,28 +197,7 @@ def predict(args):
         print("\n".join(" ".join(row) for row in labels), end="\n\n")
         return side_by_side(draw(image, corners, conf), draw_read(rectify(image, corners, CELL_PX), labels, prob))
 
-    if args.camera:
-        cap = cv2.VideoCapture(0)
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            cv2.imshow("letters", view(frame))
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-        cap.release()
-    else:
-        target = Path(args.path)
-        paths = sorted(p for p in target.iterdir() if p.suffix.lower() in IMAGE_EXTS) if target.is_dir() else [target]
-        print("Any key = next photo, q = quit.")
-        for path in paths:
-            image = cv2.imread(str(path))      # applies EXIF orientation, like the labels
-            if image is None:
-                continue
-            cv2.imshow("letters", view(image))
-            if cv2.waitKey(0) & 0xFF == ord("q"):
-                break
-    cv2.destroyAllWindows()
+    browse(args.path, "letters", view)
 
 
 def main():
@@ -235,7 +212,6 @@ def main():
     t.add_argument("--workers", type=int, default=4)
     p = sub.add_parser("predict")
     p.add_argument("path", nargs="?", default="test_photos")
-    p.add_argument("--camera", action="store_true")
     args = parser.parse_args()
     train(args) if args.command == "train" else predict(args)
 
