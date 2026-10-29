@@ -222,3 +222,27 @@ def test_exchange_breaks_the_pauses():
         assert game.end() is None
     game.play(board)
     assert game.end() == ("passes", None)
+
+
+def test_loss_scores_nothing_and_passes_the_turn():
+    game = Game(["Ala", "Ola"])
+    board = place(empty_board(), 7, 6, "KOT")
+    game.play(board)
+    assert game.lose() == "Ola"
+    assert game.player == "Ala" and game.scores["Ola"] == 0 and game.racks["Ola"] == 7
+    assert game.history[-1] == ("Ola", None) and (game.board == board).all()
+
+
+def test_with_losses_six_pauses_and_losses_end_the_game():
+    # PFS 5.1.1b: four pauses in a row end a two-player game, six pauses and losses once there are losses.
+    game = Game(["Ala", "Ola"])
+    board = place(empty_board(), 7, 6, "KOT")
+    game.play(board)
+    game.lose()
+    for _ in range(4):
+        game.play(board)
+        assert game.end() is None
+    game.lose()
+    assert game.end() == ("passes", None)
+    game.play(place(board, 8, 8, "A"))                             # a move starts the count anew
+    assert game.passes == game.losses == 0

@@ -6,7 +6,12 @@ Usage (from the repository root):
 
 Enter or Space (or a click on the clock) ends the turn and the time moves to the next player;
 X ends it as an exchange (a turn without new tiles is a pause otherwise: only pauses count towards
-the end of the game), P pauses, R resets (while paused). The rules are PFS's: a player whose time
+the end of the game), P pauses, R resets (while paused). When the board read after a turn is not a
+legal move, the clock goes back to the moment it was pressed: the time the next player had used
+meanwhile is given back, the turn returns to the player who pressed and the clock stops. Then S
+counts the move as a loss (PFS 3.2.3: the player takes the tiles back, scores 0 and the next
+player's time runs), and Enter (after the tiles or the camera are put right, if the photo was
+misread) ends the turn again with a new photo. The rules are PFS's: a player whose time
 runs out makes no more moves and the others play on (6.2.1). The game ends when the bag is empty
 and a player has played their last tile, when every player still playing paused twice in a row, or
 when everyone's time has run out (see scrabble.game); the clock then stops, asks for the points
@@ -104,6 +109,7 @@ let left, turn, running, since;           // since: when the current turn's time
 let scores, last, bag, reading = 0;       // reading: turns sent but not answered yet; bag: tiles in it
 let over = null;                          // why the game ended (the server's end_info), once it has
 let out;                                  // out[i]: player i's time ran out, so they make no more moves
+let refused = null;                       // the player whose move was refused, until S or Enter settles it
 // Turns go to the server at once, so the camera takes each photo when the clock is pressed; the
 // server scores them in order, and an answer older than the one shown, or from before a reset, is dropped.
 let sent = 0, shown = 0, epoch = 0;
@@ -125,7 +131,7 @@ function send(path, data, then) {
 
 function reset() {
   left = PLAYERS.map(() => LIMIT);
-  turn = 0; running = false; since = null;
+  turn = 0; running = false; since = null; refused = null;
   scores = SCORING ? PLAYERS.map(() => 0) : null; last = ""; bag = null; over = null;
   out = PLAYERS.map(() => false);
   document.getElementById("end").hidden = true;
@@ -157,21 +163,49 @@ function next(i) {                       // the next player who still has time
 
 function endTurn(exchange) {
   if (over) return;
+  if (refused !== null) { retake(); return; }
   if (!running) {                         // the first press starts the game, or resumes it
     running = true; since = now();
     render(); return;
   }
-  const used = now() - since;
+  const used = now() - since, mover = turn;
   stop();
-  send("turn", {turn: turn, player: PLAYERS[turn], used: used / 1000, left: left[turn] / 1000,
-                exchange: exchange === true});
-  turn = next(turn);
+  turn = next(mover);
+  const n = sent + 1, nextLeft = left[turn];       // this turn's request, and the next player's time now
+  send("turn", {turn: mover, player: PLAYERS[mover], used: used / 1000, left: left[mover] / 1000,
+                exchange: exchange === true}, result => {
+    if (result.refused === mover && n === sent && !over) refuse(mover, nextLeft);
+  });
   running = true; since = now();
   render();
 }
 
+// The move was refused: back to when the clock was pressed. The next player gets back the time
+// that ran while the board was read, and the turn is the mover's again, with the clock stopped.
+// Only if no turn was ended since: then the clock can't tell whose time to give back.
+function refuse(mover, nextLeft) {
+  if (running) stop();
+  left[turn] = nextLeft;
+  turn = mover; refused = mover;
+}
+
+function loss() {                         // S: the refused move counts as a loss (PFS 3.2.3)
+  const mover = refused;
+  refused = null;
+  send("loss", {turn: mover, player: PLAYERS[mover]});
+  turn = next(mover);
+  running = true; since = now();
+  render();
+}
+
+function retake() {                       // Enter: the photo was misread, so take a new one
+  turn = refused; refused = null;
+  running = true; since = now();
+  endTurn();
+}
+
 function pause() {
-  if (over) return;
+  if (over || refused !== null) return;
   if (running) stop(); else if (since !== null) { running = true; since = now(); }
   render();
 }
@@ -276,6 +310,8 @@ function render() {
   document.getElementById("last").textContent = reading ? "Reading the board…" : last;
   document.getElementById("keys").textContent =
     (over ? "Game over  ·  R: new game"
+     : refused !== null ? "Move refused: " + PLAYERS[refused] + "'s turn again  ·  S: count it as a loss "
+       + "(tiles back on the rack, 0 points)  ·  Enter: it was misread, take a new photo  ·  R: reset"
      : since === null ? "Enter / Space: start  ·  " + PLAYERS[0] + " begins"
      : running ? "Enter / Space: end turn  ·  X: end turn with an exchange  ·  P: pause"
      : "Paused  ·  P: resume  ·  R: reset")
@@ -287,6 +323,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "Enter" || e.key === " ") { e.preventDefault(); endTurn(); }
   else if ((e.key === "x" || e.key === "X") && running) endTurn(true);
   else if (e.key === "p" || e.key === "P") pause();
+  else if ((e.key === "s" || e.key === "S") && refused !== null && !over) loss();
   else if ((e.key === "r" || e.key === "R") && !running) reset();
 });
 setInterval(() => { if (running) { if (timeLeft(turn) <= 0) timeUp(); render(); } }, 100);
@@ -330,8 +367,10 @@ class Scorer:
     Each turn takes the next photo in `photos` (in name order) that has not been used yet or,
     with a `camera` (anything with `frame()`, e.g. a CameraPage), saves the camera's frame in this
     game's folder (a new folder in `photos`, made when the game starts) and records the move there
-    (game.save_record). A refused move is skipped and its photo stays used, as in
-    `python -m scrabble.game`; with `accept_refused` its tiles go on the board for 0 points instead.
+    (game.save_record). A refused move puts nothing on the board and its photo stays used, as in
+    `python -m scrabble.game`; the clock then gives the turn back to the player, who either counts
+    it as a loss (`loss`, PFS 3.2.3) or, if the photo was misread, ends the turn again for a new one.
+    With `accept_refused` its tiles go on the board for 0 points instead.
     Turns and resets coming from several requests at once are run in order with `in_order`."""
 
     def __init__(self, players, photos, read, accept_refused=False, camera=None):
@@ -348,6 +387,7 @@ class Scorer:
         self.used = set()
         self.folder, self.moves = None, []      # with a camera: this game's folder and record
         self.final = None                       # scores after the end of the game's reckoning
+        self.refused = None                     # the player whose last turn was refused, until it is settled
         if self.camera is not None:             # the preview shows the new game at once
             save_record(self.game_folder(), self.players, self.moves)
 
@@ -407,15 +447,16 @@ class Scorer:
         cv2.imwrite(str(path), frame)
         return path
 
-    def record(self, path, index, forced=False, exchange=False):
+    def record(self, path, index, forced=False, exchange=False, refused=False):
         if self.camera is not None:
             self.moves.append({"photo": path.name, "player": self.players[index], "forced": forced,
-                               "exchange": exchange})
+                               "refused": refused, "loss": False, "exchange": exchange})
             save_record(self.folder, self.players, self.moves)
 
     def turn(self, index, exchange=False):
         """Score the turn of player `index` (`exchange`: they marked it as an exchange on the clock);
-        returns the text to show."""
+        returns the text to show. A refused move leaves `refused` set to `index`."""
+        self.refused = None
         try:
             path = self.take_photo()
         except ValueError as e:
@@ -433,8 +474,9 @@ class Scorer:
             text = describe(*self.game.play(board, exchange=exchange), exchange=exchange)
             self.record(path, index, exchange=exchange)
         except MoveError as e:
-            self.record(path, index, forced=self.accept_refused, exchange=exchange)
+            self.record(path, index, forced=self.accept_refused, exchange=exchange, refused=not self.accept_refused)
             if not self.accept_refused:
+                self.refused = index
                 return f"{path.name}  {self.players[index]}: move refused ({e})"
             self.game.play(board, force=True, exchange=exchange)
             text = f"{self.players[index]}: accepted anyway for 0 points ({e})"
@@ -443,6 +485,20 @@ class Scorer:
         if self.game.ignored:
             text += f"; ignored the tiles at {', '.join(self.game.ignored)}"
         return f"{path.name}  {text}"
+
+    def loss(self, index):
+        """Player `index`'s refused move counts as a loss (PFS 3.2.3): they take their tiles back and
+        score 0, and the turn passes on; returns the text to show."""
+        player = self.players[index]
+        if self.refused != index:
+            return f"{player}: no refused move to count as a loss"
+        self.refused = None
+        self.game.turn = index
+        self.game.lose()
+        if self.camera is not None and self.moves:
+            self.moves[-1]["loss"] = True
+            save_record(self.folder, self.players, self.moves)
+        return f"{player}: loss, the tiles go back on the rack for 0 points"
 
     def time_out(self, index):
         """Player `index`'s time ran out (PFS 6.2.1); returns the text to show."""
@@ -482,7 +538,8 @@ class Scorer:
 
     def result(self, text):
         scores = self.final or self.game.scores
-        result = {"text": text, "scores": [scores[p] for p in self.players], "bag": self.game.bag}
+        result = {"text": text, "scores": [scores[p] for p in self.players], "bag": self.game.bag,
+                  "refused": self.refused}
         end = self.game.end()
         if end and self.final is None:
             result["end"] = self.end_info(*end)
@@ -554,12 +611,12 @@ def make_server(players, minutes, port=0, host="127.0.0.1", scorer=None, camera=
             if camera and url.path in ("/camera/photo", "/camera/grid"):
                 self.camera_post(url)
                 return
-            if url.path not in ("/turn", "/timeout", "/reset", "/end"):
+            if url.path not in ("/turn", "/timeout", "/loss", "/reset", "/end"):
                 self.send_error(404)
                 return
             try:
                 data = json.loads(self.body())
-                if url.path in ("/turn", "/timeout"):
+                if url.path in ("/turn", "/timeout", "/loss"):
                     player = str(data["player"])
                     index = int(data.get("turn", players.index(player) if player in players else -1))
                     if not 0 <= index < len(players):
@@ -580,6 +637,8 @@ def make_server(players, minutes, port=0, host="127.0.0.1", scorer=None, camera=
                 on_turn_end(player, used, left, exchange)
             elif url.path == "/timeout":
                 print(f"{player}: time ran out", flush=True)
+            elif url.path == "/loss":
+                print(f"{player}: loss", flush=True)
             if scorer is None:
                 self.reply()
                 return
@@ -589,6 +648,8 @@ def make_server(players, minutes, port=0, host="127.0.0.1", scorer=None, camera=
                     text = ""
                 elif url.path == "/timeout":
                     text = scorer.time_out(index)
+                elif url.path == "/loss":
+                    text = scorer.loss(index)
                 elif url.path == "/end":
                     text = scorer.finish(reason, player, racks)
                     print(f"  {text}: {', '.join(f'{p} {s}' for p, s in scorer.final.items())}", flush=True)

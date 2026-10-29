@@ -105,6 +105,32 @@ def test_refused_move_can_be_accepted(tmp_path):
     assert (scorer.game.board == board).all()
 
 
+def test_refused_move_waits_for_a_loss_or_a_new_photo(tmp_path):
+    """A refused turn is the mover's again: S counts it as a loss, Enter takes a new photo."""
+    bad = board_with((7, 7, "A"), (8, 8, "S"))                     # not in one line
+    good = board_with((7, 7, "A"), (7, 8, "S"))
+    boards = {"1.jpg": bad, "2.jpg": good, "3.jpg": board_with((7, 7, "A"), (7, 8, "S"), (8, 7, "B"), (6, 8, "C"))}
+    for name in boards:
+        (tmp_path / name).write_bytes(b"")
+    scorer = clock.Scorer(["Ann", "Bob"], tmp_path, lambda path: boards[path.name])
+    server = clock.make_server(["Ann", "Bob"], 25, scorer=scorer)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}/"
+    try:
+        turn = {"turn": 0, "player": "Ann", "used": 5, "left": 100}
+        first = post(url + "turn", turn)
+        assert "move refused" in first["text"] and first["refused"] == 0
+        again = post(url + "turn", turn)                           # misread: the same player, a new photo
+        assert again["refused"] is None and again["scores"] == [4, 0]
+        assert post(url + "turn", turn | {"turn": 1, "player": "Bob"})["refused"] == 1
+        assert "no refused move" in post(url + "loss", {"turn": 0, "player": "Ann"})["text"]
+        lost = post(url + "loss", {"turn": 1, "player": "Bob"})
+        assert lost["text"].startswith("Bob: loss") and lost["refused"] is None and lost["scores"] == [4, 0]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 class FakeCamera:
     """Frames whose brightness numbers them (60, 120, ...), so the reader can tell which one it got."""
 
@@ -126,13 +152,15 @@ def test_camera_photos_and_record_are_saved_per_game(tmp_path):
     assert scorer.turn(1).startswith("001.jpg  Bob: AS")
     assert scorer.turn(0).startswith("002.jpg  Ann: AB")
     assert "move refused" in scorer.turn(1)          # new tiles not in one line
-    assert scorer.game.scores == {"Ann": 4, "Bob": 4}
+    assert scorer.game.scores == {"Ann": 4, "Bob": 4} and scorer.refused == 1
+    assert scorer.loss(1) == "Bob: loss, the tiles go back on the rack for 0 points"
+    assert scorer.refused is None and scorer.game.history[-1] == ("Bob", None) and scorer.game.losses == 1
     first = scorer.folder
     assert sorted(p.name for p in first.iterdir()) == ["001.jpg", "002.jpg", "003.jpg", "game.json"]
     assert game.load_record(first) == {"players": ["Ann", "Bob"], "moves": [
-        {"photo": "001.jpg", "player": "Bob", "forced": False, "exchange": False},
-        {"photo": "002.jpg", "player": "Ann", "forced": False, "exchange": False},
-        {"photo": "003.jpg", "player": "Bob", "forced": False, "exchange": False}]}
+        {"photo": "001.jpg", "player": "Bob", "forced": False, "refused": False, "loss": False, "exchange": False},
+        {"photo": "002.jpg", "player": "Ann", "forced": False, "refused": False, "loss": False, "exchange": False},
+        {"photo": "003.jpg", "player": "Bob", "forced": False, "refused": True, "loss": True, "exchange": False}]}
     scorer.reset()                                    # a new game gets a new folder
     scorer.turn(0)
     assert scorer.folder != first and scorer.folder.parent == tmp_path
