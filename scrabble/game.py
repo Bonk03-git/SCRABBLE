@@ -11,7 +11,10 @@ The game ends as in the PFS tournament rules (Game.end): when the bag is empty a
 played their last tile (5.1.1a; the bag and every rack are counted from the tiles played, as
 everyone draws back up to 7), when every player still playing passed twice in a row (5.1.1b: four
 pauses for two players; an exchange is not a pause, but only the clock can tell it from a pass),
-or when every player's time has run out (5.1.1c). A player whose time runs out makes no more
+or when every player's time has run out (5.1.1c). A wrongly placed move the players don't take
+back as a misread is a loss (3.2.3: tiles back on the rack, 0 points, the turn passes on); a loss
+is not a pause (3.4.3), but once there are losses among them, six pauses and losses in a row end
+the game for two players (5.1.1b; three for one playing on alone, 6.2.1). A player whose time runs out makes no more
 moves and the others play on (6.2.1: alone, two pauses end the game). Then the points of the tiles
 left on each rack are taken off its owner's score (5.1.4), and a player who played out gets those
 of all the others (final_scores).
@@ -238,7 +241,8 @@ class Game:
         self.ignored = []           # cells of tiles apart from the others in the last read board
         self.bag = TILES - RACK * len(self.players)
         self.racks = {p: RACK for p in self.players}     # tiles on each rack
-        self.passes = 0             # pauses in a row: turns without new tiles that were not exchanges
+        self.passes = 0             # pauses and losses in a row (turns without new tiles that were not exchanges)
+        self.losses = 0             # losses among them
         self.timed_out = set()      # players whose time ran out: they make no more moves
 
     @property
@@ -271,23 +275,37 @@ class Game:
             drawn = min(played, self.bag)
             self.racks[player] += drawn - played
             self.bag -= drawn
-            self.passes = 0
+            self.passes = self.losses = 0
+        elif exchange:
+            self.passes = self.losses = 0
         else:
-            self.passes = 0 if exchange else self.passes + 1
+            self.passes += 1
         self.history.append((player, move))
         self.turn += 1
         return player, move
+
+    def lose(self):
+        """The current player's move was wrong (PFS 3.2.3): their tiles go back on the rack, they score
+        0 and the turn passes on. Nothing on the board changes, as a refused move never got on it."""
+        player = self.player
+        self.passes += 1
+        self.losses += 1
+        self.misread, self.ignored = [], []
+        self.history.append((player, None))
+        self.turn += 1
+        return player
 
 
     def time_out(self, player):
         """`player`'s time ran out: they make no more moves, and the pauses are counted anew among
         the players still playing."""
         self.timed_out.add(player)
-        self.passes = 0
+        self.passes = self.losses = 0
 
     def end(self):
         """(OUT, the player) if the last move played out the bag and the rack, (PASSES, None) if every
-        player still playing passed twice in a row, (TIME, None) if every player's time ran out,
+        player still playing passed twice in a row (three times, pauses and losses together, once
+        there are losses among them: PFS 5.1.1b), (TIME, None) if every player's time ran out,
         otherwise None."""
         playing = [p for p in self.players if p not in self.timed_out]
         if not playing:
@@ -296,7 +314,7 @@ class Game:
             player, move = self.history[-1]
             if move is not None and self.bag == 0 and self.racks[player] == 0:
                 return OUT, player
-        if self.passes >= PASS_ROUNDS * len(playing):
+        if self.passes >= (PASS_ROUNDS + (self.losses > 0)) * len(playing):
             return PASSES, None
         return None
 
@@ -332,9 +350,12 @@ def describe(player, move, exchange=None):
 
 def load_record(folder):
     """The clock's record of the game in `folder`, or None:
-    {"players": [names], "moves": [{"photo": name, "player": name, "forced": bool, "exchange": bool}]},
+    {"players": [names], "moves": [{"photo": name, "player": name, "forced": bool, "refused": bool, "loss": bool,
+    "exchange": bool}]},
     one move per photo in playing order; "forced" means the clock accepted a refused move for 0
-    points, "exchange" that the player marked the turn as an exchange on the clock. A finished game
+    points, "refused" that the move was refused (and not forced), "loss" that the players then
+    counted it as a loss (PFS 3.2.3; otherwise it was a misread and the same player's next photo
+    follows), "exchange" that the player marked the turn as an exchange on the clock. A finished game
     also has "end": {"reason": OUT / PASSES / TIME, "player": who played out (or null),
     "left": {name: points on their rack}}."""
     path = Path(folder) / RECORD

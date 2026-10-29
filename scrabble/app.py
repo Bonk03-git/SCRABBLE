@@ -503,7 +503,7 @@ def play_game(photos, reading, players, record=None):
         kind = ("Exchange" if recorded[name].get("exchange") else "Pause") if name in recorded else "Pass / exchange"
         step = {"name": name, "key": key, "result": result, "player": game.player, "move": None, "error": None,
                 "kind": kind,
-                "forced": None, "misread": [], "ignored": []}
+                "forced": None, "loss": False, "misread": [], "ignored": []}
         if result is None:
             step["error"] = "can't open the photo"
         else:
@@ -515,6 +515,9 @@ def play_game(photos, reading, players, record=None):
                 if key in forced:
                     step["error"], step["forced"] = None, str(e)
                     game.play(result["labels"], force=True, exchange=exchange)
+                elif recorded.get(name, {}).get("loss"):     # the players counted it as a loss on the clock
+                    step["loss"] = True
+                    game.lose()
             step["ignored"] = list(game.ignored)
             if not step["error"]:
                 step["move"] = game.history[-1][1]
@@ -542,7 +545,9 @@ def game_over(end, scores):
 def move_panel(step, k, steps, colours):
     """Who played the move and how it was scored, or why it was refused."""
     move, player = step["move"], step["player"]
-    if step["error"]:
+    if step["loss"]:
+        pill = '<span class="pill bad">Loss</span>'
+    elif step["error"]:
         pill = '<span class="pill bad">Not counted</span>'
     elif step["forced"]:
         pill = '<span class="pill warn">Accepted for 0</span>'
@@ -556,7 +561,9 @@ def move_panel(step, k, steps, colours):
 
     forced = st.session_state["forced"]
     if step["error"]:
-        st.error(f"**This board can't be a legal move:** {step['error']}.\n\nThe turn stays with {player}. "
+        then = (f"The players counted it as a loss: {player} took the tiles back for 0 points and the turn "
+                "moved on." if step["loss"] else f"The turn stays with {player}.")
+        st.error(f"**This board can't be a legal move:** {step['error']}.\n\n{then} "
                  "Tiles read in the photo but not counted have a dashed red frame on the board.",
                  icon=":material/block:")
         if st.button("Accept this board anyway (0 points)", type="primary", icon=":material/check:",
@@ -587,7 +594,7 @@ def moves_table(steps, players, k):
     rows = []
     for i, s in enumerate(steps):
         m = s["move"]
-        status = ("⛔ not counted" if s["error"] else "⚠️ accepted for 0" if s["forced"]
+        status = ("⛔ loss" if s["loss"] else "⛔ not counted" if s["error"] else "⚠️ accepted for 0" if s["forced"]
                   else "✅ scored" if m else f"⏭️ {s['kind'].lower()}")
         words = (s["error"] if s["error"] else s["forced"] if s["forced"] else describe_words(m) if m else "")
         rows.append({"#": i + 1, "Player": s["player"], "Status": status, "Words": words,

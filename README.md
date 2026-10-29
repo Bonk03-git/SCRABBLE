@@ -288,7 +288,7 @@ The player on turn is green. Every end of a turn is printed in the terminal (who
 
 **End of the game** follows the PFS tournament rules (Regulamin Turniejów PFS):
 - the bag is empty and a player has played the last tile from their rack (5.1.1a);
-- four pauses in a row (5.1.1b): every player still playing paused twice in a row. A turn without new tiles is a pause, but an **exchange is not**: end an exchange turn with **X** instead of Enter. The photo can't tell them apart, so a forgotten X counts as a pause;
+- four pauses in a row (5.1.1b): every player still playing paused twice in a row. A turn without new tiles is a pause, but an **exchange is not**: end an exchange turn with **X** instead of Enter. The photo can't tell them apart, so a forgotten X counts as a pause. A loss (see below) is not a pause either, but once there are losses among them, six pauses and losses in a row end the game (three for a player playing on alone);
 - every player's time has run out (5.1.1c).
 
 When a player's time runs out (the clock reaches 0:00), they make no more moves (6.2.1): their box goes grey and the others play on. A move they were making when the time ran out is taken back (6.2.2): take the tiles off the board before the next press. Playing on alone, two pauses in a row end the game. There are no penalty points for time.
@@ -296,10 +296,18 @@ When a player's time runs out (the clock reaches 0:00), they make no more moves 
 | Key | Action |
 |---|---|
 | X | end the turn as an exchange (not a pause) |
+| S | after a refused move: count it as a loss |
+| Enter / Space | after a refused move: it was misread, take a new photo |
+
+**A refused move** (tiles not in one line, not touching the others, the first move off the centre, ...). The clock learns it only after the board is read, when the next player's time is already running. So the clock goes back to the moment it was pressed: the next player gets back the time used meanwhile, the turn is the mover's again and the clock stops, showing why. Then:
+- **S**: the move really is wrong. By PFS 3.2.3 that is a loss: the player takes the tiles back, scores 0, and the next player's time runs;
+- **Enter**: the photo was misread (a hand over the board, a tile lying across a line). Put it right and press Enter: a new photo is taken and scored for the same player.
+
+The refused photo stays in the game folder, marked in `game.json` as refused (and as a loss after S). If a turn was ended again before the answer came, the clock can't tell whose time to give back, so it only shows the reason.
 
 The bag and every rack are counted from the tiles read on the board: each player starts with 7 tiles and draws back up to 7 while the bag lasts. A misread tile can put the count off by one. When the game ends, the clock stops and asks for the points of the tiles left on each rack. Where the board tells them, they are already filled in: once the bag is empty, a player with an empty rack has 0, and if only one player still has tiles, all the tiles not on the board are theirs. With the bag empty, the number of tiles on each rack is shown next to the name. **Final score** takes each rack's points off its owner's score (5.1.4) and gives the player who played out the points of all the others' racks. The final scores are shown on the clock; `r` starts a new game. The end goes into `game.json` too, and the game preview shows it above the last move.
 
-**Scoring.** Every end of a turn takes a photo, reads the board in it and scores the move for the player who pressed the clock: the clock, not the order of the photos, says who played. The move (words and points, or why it was refused) is shown under the clocks and printed in the terminal, and each player's score is shown under their time. A turn with no new tiles on the board is a pass or an exchange. A refused move is skipped; with `--accept-refused` its tiles go on the board for 0 points, so one misread doesn't block every later move. Resetting the clock (`r`, or reloading the page) starts a new game. The models load once at start (`--corner-model`, `--no-fit` as in `python -m scrabble.game`).
+**Scoring.** Every end of a turn takes a photo, reads the board in it and scores the move for the player who pressed the clock: the clock, not the order of the photos, says who played. The move (words and points, or why it was refused) is shown under the clocks and printed in the terminal, and each player's score is shown under their time. A turn with no new tiles on the board is a pass or an exchange. A refused move puts nothing on the board and waits for S or Enter (above); with `--accept-refused` its tiles go on the board for 0 points instead and the clock goes on, so one misread doesn't block every later move. Resetting the clock (`r`, or reloading the page) starts a new game. The models load once at start (`--corner-model`, `--no-fit` as in `python -m scrabble.game`).
 
 **Replaying photos.** With `--photos DIR`, every end of a turn takes the next photo in `DIR` that has not been used yet (in name order, 2 before 10) instead of the camera page; a turn with no new photo scores nothing. A sample game folder replays the game one press at a time.
 
@@ -311,7 +319,7 @@ Mount the camera above the board, looking down or slightly at an angle, so the w
 
 **Phone as the camera.** Browsers give a page the camera only on `localhost` or over https, so the clock also serves its pages over https on port 8643, open to the local network; the terminal and the clock show the address (`Phone: https://192.168.x.y:8643/camera`). Connect the phone to the same Wi-Fi and open that address. The certificate is self-signed (made with openssl in `.cert/`, one per IP address of the computer), so the phone warns the first time: choose to continue anyway (Chrome: *Advanced → Proceed*; Safari: *Show details → visit this website*). If the phone can't reach the page at all, the firewall blocks the port: `sudo ufw allow 8643/tcp`.
 
-Each game gets its own folder, `<date and time>/` inside `--games DIR` (default `dataset/camera/`), made when the game starts; a reset of the clock starts a new folder (one without photos is removed). It holds the photos `001.jpg`, `002.jpg`, ... and `game.json`, the clock's record of the game: the players, for each photo who played it and whether a refused move was accepted for 0 points, and at the end why the game ended and the points left on each rack.
+Each game gets its own folder, `<date and time>/` inside `--games DIR` (default `dataset/camera/`), made when the game starts; a reset of the clock starts a new folder (one without photos is removed). It holds the photos `001.jpg`, `002.jpg`, ... and `game.json`, the clock's record of the game: the players, for each photo who played it, whether its move was refused, counted as a loss or accepted for 0 points, and at the end why the game ended and the points left on each rack.
 
 **Game preview.** The clock starts the test app with **Follow the clock's game** on: it shows the newest game in `dataset/camera/` and jumps to the newest move by itself after every move (it looks every 2 s). A game is replayed as the clock scored it: the players and who played each photo come from `game.json`, not from the sidebar or the order of the photos, so a pass without a photo doesn't shift the turns. Turn the switch off to pick any folder, e.g. an older game; in `./start app` it is off unless the address has `?game=live`. The folders are also new training data.
 
