@@ -2,7 +2,7 @@
 # Dataset tools and the test app.
 # Usage: ./start [annotate] [IMAGES_DIR]   mark board corners in dataset/photos -> dataset/annotated + dataset/labels
 #        ./start app                      open the test app in the browser
-#        ./start clock [--photos DIR]     open the game clock in the browser (scores DIR's photos)
+#        ./start clock [--photos DIR]     game clock + camera page + game preview in the browser
 #        ./start camera [SOURCE]          live view of a camera, to aim it at the board
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"

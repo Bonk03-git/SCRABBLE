@@ -13,8 +13,11 @@ the read tiles (unsure ones in red) and the board as a clean digital grid.
 
 Photos come from a folder under test_photos/ or dataset/camera/, from files uploaded in the
 browser, or (in the Single photo view) from the computer's camera. A folder with the clock's record
-(game.json, from ./start clock --camera) is replayed as the clock scored it: its players, and who
-played each photo, come from the record.
+(game.json, from ./start clock) is replayed as the clock scored it: its players, and who played
+each photo, come from the record.
+With "Follow the clock's game" (on when the URL has ?game=live, as the clock's "Game preview" link
+does), the app shows the clock's newest game in dataset/camera/ and its newest move, and updates
+itself after every move.
 """
 
 import hashlib
@@ -27,11 +30,11 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from scrabble.board import CELLS, rectify
+from scrabble.board import CELLS, IMAGE_EXTS, rectify
 from scrabble.corners import draw, fit, load_model as load_corner_model, predict_corners
-from scrabble.game import (BINGO, LETTER_BONUS, PREMIUMS, RACK, VALUES, WORD_BONUS, Game, MoveError,
-                           drop_isolated, load_record, natural_key)
-from scrabble.letters import IMAGE_EXTS, MODEL_PATH, draw_read, load_model, read_board
+from scrabble.game import (BINGO, LETTER_BONUS, OUT, PREMIUMS, RACK, RECORD, VALUES, WORD_BONUS, Game, MoveError,
+                           drop_isolated, end_text, final_scores, load_record, natural_key)
+from scrabble.letters import MODEL_PATH, draw_read, load_model, read_board
 from scrabble.tiles import EMPTY, ROW_NAMES, CELL_PX
 
 PHOTOS_ROOT = Path("test_photos")
@@ -40,6 +43,7 @@ DEFAULT_FOLDER = PHOTOS_ROOT / "gameplay" / "1"
 DEFAULT_CORNER_MODEL = "corners.pt"
 UNSURE = 0.7                    # same threshold as the red tiles in draw_read
 GAME, PHOTO = "Game", "Single photo"
+LIVE_CHECK = 2                  # s between looks for a new move in the followed game
 # Premium squares as printed on the board: (short name, name, colour, text colour).
 PREMIUM_STYLE = {
     "W": ("TW", "triple word", "#d9463b", "#fff"),
@@ -306,6 +310,25 @@ def photo_folders():
     return [f for f in folders if any(p.suffix.lower() in IMAGE_EXTS for p in f.iterdir())]
 
 
+def live_folder():
+    """The clock's newest game: the last folder (by name, which is its start time) with a record."""
+    games = [p for p in CAMERA_ROOT.iterdir() if (p / RECORD).is_file()] if CAMERA_ROOT.is_dir() else []
+    return max(games, key=lambda p: p.name, default=None)
+
+
+def live_state():
+    folder = live_folder()
+    record = load_record(folder) if folder else None
+    return str(folder), len(record["moves"]) if record else 0, bool(record and record.get("end"))
+
+
+@st.fragment(run_every=LIVE_CHECK)
+def follow():
+    """Rerun the app when the clock adds a move, ends the game or starts a new one."""
+    if live_state() != st.session_state.get("live_seen"):
+        st.rerun(scope="app")
+
+
 def choose_photos(allow_camera):
     """([(name, bytes)], the clock's record or None) picked in the sidebar."""
     sidebar = st.sidebar
@@ -319,6 +342,10 @@ def choose_photos(allow_camera):
     if source not in sources:                      # Camera was picked, then the view changed
         source = "Folder"
     if source == "Folder":
+        if sidebar.toggle("Follow the clock's game", value=st.query_params.get("game") == "live", key="live",
+                          help=f"Show the newest game the clock is taking photos of (in {CAMERA_ROOT}/) "
+                               "and its newest move, updated after every move."):
+            return live_photos()
         folders = photo_folders()
         if not folders:
             sidebar.warning(f"No photos under {PHOTOS_ROOT}/ or {CAMERA_ROOT}/")
@@ -340,6 +367,30 @@ def choose_photos(allow_camera):
         return sorted(((f.name, f.getvalue()) for f in files or []), key=lambda f: natural_key(Path(f[0]))), None
     shot = st.camera_input("Take a photo of the board")
     return ([("camera.jpg", shot.getvalue())] if shot else []), None
+
+
+def live_photos():
+    """choose_photos for the clock's newest game; jumps to its newest move when one comes."""
+    state = live_state()
+    if state != st.session_state.get("live_seen"):
+        st.session_state["live_seen"] = state
+        st.session_state["jump_to"] = state[1] - 1
+    with st.sidebar:                               # after live_seen is set, or it would rerun at once
+        follow()
+    folder = live_folder()
+    if folder is None:
+        st.sidebar.warning(f"No game from the clock in {CAMERA_ROOT}/ yet")
+        return [], None
+    record = load_record(folder)
+    paths = [folder / m["photo"] for m in record["moves"] if (folder / m["photo"]).is_file()]
+    st.sidebar.caption(f"{folder.name}: {len(paths)} photos so far; updates by itself after every move")
+    return [(p.name, p.read_bytes()) for p in paths], record
+
+
+def jump(key):
+    """Show the step that live_photos asked for (the newest), once."""
+    if "jump_to" in st.session_state:
+        st.session_state[key] = max(st.session_state.pop("jump_to"), 0)
 
 
 def choose_players(record=None):
@@ -391,6 +442,7 @@ def stepper(labels, key, default=0):
 
 
 def photos_view(photos, reading):
+    jump("photo")
     k = stepper([name for name, _ in photos], "photo")
     name, data = photos[k]
     with st.spinner("Reading the board..."):
@@ -447,18 +499,22 @@ def play_game(photos, reading, players, record=None):
             if recorded[name]["forced"] and key not in applied:
                 applied.add(key)
                 forced.add(key)
+        # Without the clock's record, a turn without new tiles may be a pause or an exchange.
+        kind = ("Exchange" if recorded[name].get("exchange") else "Pause") if name in recorded else "Pass / exchange"
         step = {"name": name, "key": key, "result": result, "player": game.player, "move": None, "error": None,
+                "kind": kind,
                 "forced": None, "misread": [], "ignored": []}
         if result is None:
             step["error"] = "can't open the photo"
         else:
+            exchange = recorded.get(name, {}).get("exchange", False)
             try:
-                game.play(result["labels"])
+                game.play(result["labels"], exchange=exchange)
             except MoveError as e:
                 step["error"] = str(e)
                 if key in forced:
                     step["error"], step["forced"] = None, str(e)
-                    game.play(result["labels"], force=True)
+                    game.play(result["labels"], force=True, exchange=exchange)
             step["ignored"] = list(game.ignored)
             if not step["error"]:
                 step["move"] = game.history[-1][1]
@@ -469,6 +525,20 @@ def play_game(photos, reading, players, record=None):
     return steps
 
 
+def game_over(end, scores):
+    """The clock's end of the game: why, and the final scores after the tiles left on the racks."""
+    left = end["left"]
+    final = final_scores(scores, left, end["player"] if end["reason"] == OUT else None)
+    best = max(final.values())
+    rows = []
+    for p, total in sorted(final.items(), key=lambda item: -item[1]):
+        change = total - scores[p]
+        rows.append(f"{'★ ' if total == best else ''}**{p}** {total}"
+                    + (f" ({'+' if change > 0 else '−'}{abs(change)} for the racks)" if change else ""))
+    st.success(f"**Game over:** {end_text(end['reason'], end['player'])}.  \n" + "  ·  ".join(rows),
+               icon=":material/flag:")
+
+
 def move_panel(step, k, steps, colours):
     """Who played the move and how it was scored, or why it was refused."""
     move, player = step["move"], step["player"]
@@ -477,7 +547,7 @@ def move_panel(step, k, steps, colours):
     elif step["forced"]:
         pill = '<span class="pill warn">Accepted for 0</span>'
     elif move is None:
-        pill = '<span class="pill pass">Pass / exchange</span>'
+        pill = f'<span class="pill pass">{step["kind"]}</span>'
     else:
         pill = f'<span class="pill ok">+{move.score} points</span>'
     st.html(f'<div class="move-head">{avatar(player, colours[player], "avatar sm")}<div>'
@@ -500,7 +570,8 @@ def move_panel(step, k, steps, colours):
             forced.discard(step["key"])
             st.rerun()
     elif move is None:
-        st.info("No new tiles on the board: a pass or an exchange. The turn moves on.", icon=":material/skip_next:")
+        what = {"Exchange": "an exchange (marked on the clock)", "Pause": "a pause"}.get(step["kind"], "a pass or an exchange")
+        st.info(f"No new tiles on the board: {what}. The turn moves on.", icon=":material/skip_next:")
     else:
         st.html(score_html(player, move))
     if step["misread"]:
@@ -517,7 +588,7 @@ def moves_table(steps, players, k):
     for i, s in enumerate(steps):
         m = s["move"]
         status = ("⛔ not counted" if s["error"] else "⚠️ accepted for 0" if s["forced"]
-                  else "✅ scored" if m else "⏭️ pass")
+                  else "✅ scored" if m else f"⏭️ {s['kind'].lower()}")
         words = (s["error"] if s["error"] else s["forced"] if s["forced"] else describe_words(m) if m else "")
         rows.append({"#": i + 1, "Player": s["player"], "Status": status, "Words": words,
                      "Points": m.score if m else 0, **{p: s["scores"][p] for p in players}, "Photo": s["name"]})
@@ -546,12 +617,16 @@ def game_view(photos, reading, players, record=None):
     steps = play_game(photos, reading, players, record)
 
     jump_to_picked_row()
+    jump("move")
     scores = st.empty()                            # filled once the stepper says which move is shown
     k = stepper([f"Move {i + 1} · {s['name']}" for i, s in enumerate(steps)], "move")
     step = steps[k]
     before = steps[k - 1]["scores"] if k else {p: 0 for p in players}
     played = step["player"] if step["move"] else None
     scores.html(players_html(players, colours, step["scores"], before, played))
+    end = record.get("end") if record else None
+    if end and k == len(steps) - 1:
+        game_over(end, step["scores"])
     move = step["move"]
 
     board_col, score_col = st.columns([11, 9], gap="large")
@@ -613,6 +688,10 @@ def main():
     reading = (str(corner_path), fit_grid)
     st.sidebar.caption("Keyboard: ← → one step, Home / End first and last.")
 
+    if not photos and st.session_state.get("live") and record:
+        st.info(f"**Waiting for the first move** of {', '.join(record['players'])}: press the clock after it.",
+                icon=":material/hourglass_empty:")
+        return
     if not photos:
         st.info("**No photos yet.** Pick a folder or upload photos in the sidebar"
                 + (" (or take one with the camera)." if view == PHOTO else ": one photo of the board after "

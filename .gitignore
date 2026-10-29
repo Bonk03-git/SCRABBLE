@@ -8,3 +8,4 @@ check_labels*
 check_grid/
 dataset/photos/
 dataset/camera/
+.cert/

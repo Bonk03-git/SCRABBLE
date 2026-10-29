@@ -6,7 +6,6 @@ fixed place inside it, GRID_IN_BOARD, measured on the average of all 200 rectifi
 
 Usage:
   python -m scrabble.board [IMAGES_DIR_OR_FILE]
-  python -m scrabble.board --camera
 
 Corners come from the corner model (models/corners.pt). The preview shows the photo
 with the detected grid next to the rectified board.
@@ -168,13 +167,31 @@ def side_by_side(photo, board, height=600):
     return np.hstack(views)
 
 
+def image_paths(target):
+    """The photos in a folder (in name order), or the one file given."""
+    target = Path(target)
+    return sorted(p for p in target.iterdir() if p.suffix.lower() in IMAGE_EXTS) if target.is_dir() else [target]
+
+
+def browse(target, window, view):
+    """Show view(photo) in a window for each photo in `target` (a folder or a file), one at a time."""
+    print("Any key = next photo, q = quit.")
+    for path in image_paths(target):
+        image = cv2.imread(str(path))      # applies EXIF orientation, like the labels
+        if image is None:
+            continue
+        cv2.imshow(window, view(image))
+        if cv2.waitKey(0) & 0xFF == ord("q"):
+            break
+    cv2.destroyAllWindows()
+
+
 def main():
     from scrabble.corners import draw, load_model, predict_corners
     import torch
 
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("path", nargs="?", default="test_photos")
-    parser.add_argument("--camera", action="store_true")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -184,28 +201,7 @@ def main():
         corners, conf = predict_corners(model, image, device)
         return side_by_side(draw(image, corners, conf), draw_board(rectify(image, corners)))
 
-    if args.camera:
-        cap = cv2.VideoCapture(0)
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            cv2.imshow("board", view(frame))
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-        cap.release()
-    else:
-        target = Path(args.path)
-        paths = sorted(p for p in target.iterdir() if p.suffix.lower() in IMAGE_EXTS) if target.is_dir() else [target]
-        print("Any key = next photo, q = quit.")
-        for path in paths:
-            image = cv2.imread(str(path))      # applies EXIF orientation, like the labels
-            if image is None:
-                continue
-            cv2.imshow("board", view(image))
-            if cv2.waitKey(0) & 0xFF == ord("q"):
-                break
-    cv2.destroyAllWindows()
+    browse(args.path, "board", view)
 
 
 if __name__ == "__main__":

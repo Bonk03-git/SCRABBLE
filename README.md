@@ -15,7 +15,7 @@ The first model finds the 15×15 grid on an **empty board** (calibration before 
    No tiles on the board.
 2. **Label them.** Copy the photos to `dataset/photos/` and mark the corners (see below), then add the grid corners to the labels with `python -m scrabble.check grid-labels` and check the previews (see "Grid corners in the labels").
 3. **Train the model** (see "Training the corner model").
-4. **Check the results** on new photos or live from the camera.
+4. **Check the results** on new photos, or live on the clock's camera page (the grid over the live view).
 
 ## Creating labels (marking the board on photos)
 
@@ -140,7 +140,6 @@ Check the results (any key = next photo, `q` = quit):
 ```powershell
 python -m scrabble.corners predict                 # photos in dataset/photos
 python -m scrabble.corners predict path\to\photos   # a folder or a single file
-python -m scrabble.corners predict --camera         # live from the camera
 ```
 
 The preview shows corners 1–4, the detected 15×15 grid and each corner's confidence (0–1).
@@ -155,7 +154,6 @@ Preview the photo next to the rectified board:
 
 ```bash
 python -m scrabble.board test_photos     # a folder or a single file
-python -m scrabble.board --camera        # live from the camera
 ```
 
 ## Tile dataset (cells with known letters)
@@ -215,7 +213,6 @@ The fit can't fix a grid more than about a cell off. `GRID_IN_BOARD` was measure
 ```bash
 python -m scrabble.letters train                  # 15 epochs by default; the best model goes to models/letters.pt
 python -m scrabble.letters predict test_photos    # read boards in photos (a folder or a single file)
-python -m scrabble.letters predict --camera       # live from the camera
 ```
 
 Each epoch prints the validation accuracy and the most common mistakes, e.g. `W->M x2`. The preview shows the read tiles on the rectified board, with unsure ones in red, and prints the board as text.
@@ -245,7 +242,7 @@ It opens in the browser at http://localhost:8501; stop it with Ctrl+C in the ter
 
 **Sidebar.** It opens on the **Game** view, the `corners.pt` corner model and the `test_photos/gameplay/1` folder (the first sample game; `test_photos/gameplay/2` is the second). You can change:
 - the view: **Game** or **Single photo**;
-- where the photos come from (**Photos**): a folder under `test_photos/` or `dataset/camera/` (games taken with the clock and a camera, see [Camera](#camera)), files uploaded in the browser, or (Single photo view only) a shot from the computer's camera;
+- where the photos come from (**Photos**): a folder under `test_photos/` or `dataset/camera/` (games taken with the clock and the camera page, see [Camera](#camera)), or the clock's current game (**Follow the clock's game**), files uploaded in the browser, or (Single photo view only) a shot from the computer's camera;
 - the number of players and their names (**Players**, Game view), in playing order;
 - under **Settings**: the corner model (any `models/corners*.pt`) and **Fit the grid to the board lines** (on by default; turn it off to see what the corner model alone gives).
 
@@ -264,15 +261,22 @@ If a move is refused (for example 8 new tiles at once, tiles not in one line, or
 
 ## Game clock
 
-A chess-style clock in the browser: each player's time counts down only during their turn.
+A game runs on three browser pages, all started by one command:
+
+| Page | Address | What it does |
+|---|---|---|
+| **Clock** | http://localhost:8600/ | chess-style clock; every press ends a turn and asks the camera page for a photo |
+| **Camera** | http://localhost:8600/camera, or on a phone https://<computer's IP>:8643/camera | the live view of a camera with the grid found in it; takes the photo when the clock is pressed |
+| **Game preview** | http://localhost:8501/?game=live | the test app (see above) following this game: the board, words and scores after the newest move |
 
 ```bash
-./start clock                                   # 2 players, 25 minutes each
+./start clock                                   # 2 players, 25 minutes each, camera page + preview
 ./start clock --players Ala Ola Ela --minutes 20
-./start clock --photos test_photos/gameplay/2  # also read and score the board after each turn
+./start clock --photos test_photos/gameplay/2  # replay a sample game's photos instead of the camera
+./start clock --clock-only                      # just the clock
 ```
 
-It opens at http://127.0.0.1:8600/ (`--port` changes it); stop it with Ctrl+C in the terminal.
+The clock opens in the browser; the links under it open the camera page and the game preview. Stop it all with Ctrl+C in the terminal. `--port`, `--phone-port` and `--preview-port` change the ports, `--no-preview` doesn't start the preview, `--no-phone` serves the camera page only on this computer.
 
 | Key | Action |
 |---|---|
@@ -280,29 +284,38 @@ It opens at http://127.0.0.1:8600/ (`--port` changes it); stop it with Ctrl+C in
 | `p` | pause / resume |
 | `r` | reset all clocks (while paused) |
 
-The player on turn is green. Time over the limit keeps counting and is shown in red with a minus. Every end of a turn is printed in the terminal (who played, how long the turn took, the time left).
+The player on turn is green. Every end of a turn is printed in the terminal (who played, how long the turn took, the time left). While scoring, the bar at the bottom also shows how many tiles are left in the bag.
 
-**Reading the board on the clock.** With `--photos DIR`, every end of a turn also takes the next photo in `DIR` that has not been used yet (in name order, 2 before 10), reads the board in it and scores the move for the player who pressed the clock: the clock, not the order of the photos, says who played. The move (words and points, or why it was refused) is shown under the clocks and printed in the terminal, and each player's score is shown under their time. A turn with no new tiles on the board is a pass or an exchange; a turn with no new photo in the folder scores nothing. A sample game folder replays the game one press at a time; in a real game, take the photo of the board and copy it into the folder before pressing the clock. A refused move is skipped; with `--accept-refused` its tiles go on the board for 0 points, so one misread doesn't block every later move. Resetting the clock (`r`, or reloading the page) also starts the game again from the first photo. The models load once at start (`--corner-model`, `--no-fit` as in `python -m scrabble.game`).
+**End of the game** follows the PFS tournament rules (Regulamin Turniejów PFS):
+- the bag is empty and a player has played the last tile from their rack (5.1.1a);
+- four pauses in a row (5.1.1b): every player still playing paused twice in a row. A turn without new tiles is a pause, but an **exchange is not**: end an exchange turn with **X** instead of Enter. The photo can't tell them apart, so a forgotten X counts as a pause;
+- every player's time has run out (5.1.1c).
+
+When a player's time runs out (the clock reaches 0:00), they make no more moves (6.2.1): their box goes grey and the others play on. A move they were making when the time ran out is taken back (6.2.2): take the tiles off the board before the next press. Playing on alone, two pauses in a row end the game. There are no penalty points for time.
+
+| Key | Action |
+|---|---|
+| X | end the turn as an exchange (not a pause) |
+
+The bag and every rack are counted from the tiles read on the board: each player starts with 7 tiles and draws back up to 7 while the bag lasts. A misread tile can put the count off by one. When the game ends, the clock stops and asks for the points of the tiles left on each rack. Where the board tells them, they are already filled in: once the bag is empty, a player with an empty rack has 0, and if only one player still has tiles, all the tiles not on the board are theirs. With the bag empty, the number of tiles on each rack is shown next to the name. **Final score** takes each rack's points off its owner's score (5.1.4) and gives the player who played out the points of all the others' racks. The final scores are shown on the clock; `r` starts a new game. The end goes into `game.json` too, and the game preview shows it above the last move.
+
+**Scoring.** Every end of a turn takes a photo, reads the board in it and scores the move for the player who pressed the clock: the clock, not the order of the photos, says who played. The move (words and points, or why it was refused) is shown under the clocks and printed in the terminal, and each player's score is shown under their time. A turn with no new tiles on the board is a pass or an exchange. A refused move is skipped; with `--accept-refused` its tiles go on the board for 0 points, so one misread doesn't block every later move. Resetting the clock (`r`, or reloading the page) starts a new game. The models load once at start (`--corner-model`, `--no-fit` as in `python -m scrabble.game`).
+
+**Replaying photos.** With `--photos DIR`, every end of a turn takes the next photo in `DIR` that has not been used yet (in name order, 2 before 10) instead of the camera page; a turn with no new photo scores nothing. A sample game folder replays the game one press at a time.
 
 ## Camera
 
-Instead of copying photos into a folder, the clock can take them with a camera: a USB camera, or a phone that streams video over Wi-Fi (an IP camera app; use the stream's URL). Mount it above the board, looking down or slightly at an angle, so the whole board is in the picture and as large as possible. A 1920×1080 camera gives only about 60 px per cell when the board fills the frame.
+Mount the camera above the board, looking down or slightly at an angle, so the whole board is in the picture and as large as possible. A 1920×1080 camera gives only about 60 px per cell when the board fills the frame.
 
-```bash
-./start camera 4                                # live view of /dev/video4, to aim the camera
-./start clock --camera 4                        # the clock takes a photo at every end of a turn
-./start clock --camera http://192.168.1.20:8080/video --photos my_games
-```
+**Camera page** (http://localhost:8600/camera, linked from the clock). It uses the camera of the device it is open on: pick it in the list at the top (the page remembers it; a phone starts with its back camera) and allow the browser to use it. The grid that the corner model finds is drawn over the live view about three times a second, in green, or in orange when a corner is unsure (usually the board is not all in view); **Grid** or `g` hides it. Keep the page open during the game: when the clock is pressed, it takes a full-resolution frame (the view flashes) and sends it to the server. If the page is not open, or sends nothing within 10 s, the turn is not scored and the clock says why. On a phone the page also keeps the screen on.
 
-The camera's number is the N of `/dev/videoN` (a laptop's built-in camera is usually 0, a USB one comes after it); `ls /sys/class/video4linux/*/name` shows their names, or try the numbers with `./start camera N`.
+**Phone as the camera.** Browsers give a page the camera only on `localhost` or over https, so the clock also serves its pages over https on port 8643, open to the local network; the terminal and the clock show the address (`Phone: https://192.168.x.y:8643/camera`). Connect the phone to the same Wi-Fi and open that address. The certificate is self-signed (made with openssl in `.cert/`, one per IP address of the computer), so the phone warns the first time: choose to continue anyway (Chrome: *Advanced → Proceed*; Safari: *Show details → visit this website*). If the phone can't reach the page at all, the firewall blocks the port: `sudo ufw allow 8643/tcp`.
 
-**Live view** (`./start camera [SOURCE]`): `g` shows the grid found in the live view (slower; check that it lies on the board's lines), `s` or Space saves the current frame to `dataset/photos/` to annotate it later, `q` or Esc quits.
+Each game gets its own folder, `<date and time>/` inside `--games DIR` (default `dataset/camera/`), made when the game starts; a reset of the clock starts a new folder (one without photos is removed). It holds the photos `001.jpg`, `002.jpg`, ... and `game.json`, the clock's record of the game: the players, for each photo who played it and whether a refused move was accepted for 0 points, and at the end why the game ended and the points left on each rack.
 
-**Clock with a camera** (`./start clock --camera SOURCE`): every end of a turn saves the camera's current frame and reads and scores it as above. The frame is taken when the clock is pressed, when the player's hand is off the board. All other options work as without the camera.
+**Game preview.** The clock starts the test app with **Follow the clock's game** on: it shows the newest game in `dataset/camera/` and jumps to the newest move by itself after every move (it looks every 2 s). A game is replayed as the clock scored it: the players and who played each photo come from `game.json`, not from the sidebar or the order of the photos, so a pass without a photo doesn't shift the turns. Turn the switch off to pick any folder, e.g. an older game; in `./start app` it is off unless the address has `?game=live`. The folders are also new training data.
 
-Each game gets its own folder, `<date and time>/` inside `--photos DIR` (default `dataset/camera/`), made at the game's first photo; a reset of the clock starts a new folder. It holds the photos `001.jpg`, `002.jpg`, ... and `game.json`, the clock's record of the game: the players, and for each photo who played it and whether a refused move was accepted for 0 points.
-
-**Watching the game in the test app.** In `./start app`, pick the game's folder under `dataset/camera/`. A folder with `game.json` is replayed as the clock scored it: the players and who played each photo come from the record, not from the sidebar or the order of the photos, so a pass without a photo doesn't shift the turns. During a game, press **R** in the app to load the photos taken since. The folders are also new training data.
+**Aiming without the clock** (`./start camera [SOURCE]`): an OpenCV window with the live view of a USB camera (the N of `/dev/videoN`; `ls /sys/class/video4linux/*/name` shows their names) or a stream URL. `g` shows the grid found in the live view, `s` or Space saves the current frame to `dataset/photos/` to annotate it later, `q` or Esc quits.
 
 ## Current results
 
