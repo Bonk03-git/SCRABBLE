@@ -1,7 +1,7 @@
 .venv/
 __pycache__/
 .pytest_cache/
-models/
+models/corners_grid_2026-10-26.pt
 dataset/tiles/cells/
 check_labels*
 *.log
