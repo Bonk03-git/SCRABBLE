@@ -26,7 +26,7 @@ Requires Python 3.11 (Linux; Windows works for training and the test app).
 ./start          # mark board corners on photos (dataset building)
 ```
 
-`./start` creates the `.venv` environment and installs `requirements.txt` on the first run. Both models (`models/corners.pt`, `models/letters.pt`) are not in the repository; train them as described in [ARCHITECTURE.md](ARCHITECTURE.md).
+`./start` creates the `.venv` environment and installs `requirements.txt` on the first run. Both models (`models/corners.pt`, `models/letters.pt`) are in the repository, so the app works right after cloning; to retrain them, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 Tests:
 
@@ -41,7 +41,7 @@ scrabble/      the code (see ARCHITECTURE.md for every module)
 tests/         tests
 test_photos/   photos for testing: empty boards, words, sample games (gameplay/1, gameplay/2)
 dataset/       photos, labels and tile cells for training (mostly gitignored)
-models/        trained models (gitignored)
+models/        trained models
 start          launcher script
 ```
 
