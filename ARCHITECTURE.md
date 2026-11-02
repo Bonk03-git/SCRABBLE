@@ -170,6 +170,22 @@ python -m scrabble.corners predict path\to\photos   # a folder or a single file
 
 The preview shows corners 1–4, the detected 15×15 grid and each corner's confidence (0–1).
 
+### What the corner model looks at
+
+`scrabble/explain.py` draws heatmaps of the places that matter for each corner. It only reads the model and trains nothing:
+
+```powershell
+python -m scrabble.explain path\to\photo.jpg path\to\folder    # sheets in dataset/explain/ (gitignored)
+```
+
+Each photo gets one sheet (about 7 s on the CPU), with a row per corner and these columns, over the photo in gray as the network sees it:
+
+- **output**: the network's own heatmap of the corner.
+- **occlusion**: how much the corner's peak drops when a square of 32 input pixels there is covered with the mean colour. This is a measurement on an absolute scale, but the square is fixed in input pixels, so it covers a larger part of a board that looks small in the photo, and the drops of such a photo are not comparable with the others.
+- **layer4, layer3, layer2**: Grad-CAM at that backbone layer, coarse to fine. It is the HiResCAM variant (gradients times activations place by place). Each map is scaled to its own maximum, so compare places within a panel, not strength between panels.
+
+The green circle is the network's corner, without the fit to the board lines. The cyan cross is the labelled grid corner, shown for photos in an `annotated/` folder with a label.
+
 ## Top-down board view
 
 `scrabble/board.py` warps a photo by the detected board corners into a square top-down view of the 15×15 grid and cuts it into cells (`rectify`, `split_cells`).

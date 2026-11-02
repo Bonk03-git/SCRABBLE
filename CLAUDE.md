@@ -17,6 +17,7 @@ The stack is Python 3.11 (`/usr/bin/python3.11`) + OpenCV, with a local virtuale
 ./start app                                          # test app in the browser (Streamlit)
 ./start clock [--players NAME ...] [--minutes N] [--photos DIR | --clock-only]   # clock + camera page + game preview
 ./start camera [SOURCE]                              # live camera view to aim it (g: grid, s: save frame)
+env -u PYTHONPATH .venv/bin/python -m scrabble.explain PHOTO_OR_DIR [...]   # heatmaps of what the corner model looks at, in dataset/explain/ (gitignored)
 /usr/bin/python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # setup
 env -u PYTHONPATH .venv/bin/pytest -q                # all tests
 env -u PYTHONPATH .venv/bin/pytest tests/test_annotate.py::test_save_moves_photo_and_writes_label   # single test
